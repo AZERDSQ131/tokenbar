@@ -551,57 +551,6 @@ html,body{width:340px;background:#1c1c1e;color:#fff;
   line-height:1}
 .tab-settings:hover{color:rgba(255,255,255,.65)}
 
-/* settings page */
-.settings-header{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
-.settings-back{background:none;border:none;color:rgba(255,255,255,.45);font-size:18px;
-  cursor:pointer;padding:2px 6px 2px 0;line-height:1;user-select:none}
-.settings-back:hover{color:rgba(255,255,255,.75)}
-.settings-title{font-size:13px;font-weight:600;color:rgba(255,255,255,.7)}
-.settings-scroll{padding:10px 16px 16px;overflow-y:auto;max-height:400px}
-.settings-section{margin-bottom:18px}
-.settings-label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:rgba(255,255,255,.35);margin-bottom:8px}
-.settings-desc{font-size:10px;color:rgba(255,255,255,.22);margin-bottom:8px;line-height:1.5}
-.settings-row{display:flex;gap:6px;align-items:center;margin-top:6px}
-.sbtn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.7);
-  border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}
-.sbtn:hover{background:rgba(255,255,255,.14);color:#fff}
-.sbtn.danger{border-color:rgba(255,80,80,.2);color:rgba(255,100,100,.6)}
-.sbtn.danger:hover{background:rgba(255,60,60,.12);color:rgba(255,90,90,.9)}
-.settings-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
-  border-radius:6px;padding:5px 8px;color:#fff;font-size:12px;outline:none;font-family:inherit;width:100%}
-.settings-input:focus{border-color:rgba(255,255,255,.28)}
-.settings-input.narrow{width:72px}
-.time-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
-  border-radius:6px;padding:5px 4px;color:#fff;font-size:13px;outline:none;font-family:inherit;
-  width:40px;text-align:center}
-.time-input:focus{border-color:rgba(255,255,255,.28)}
-.time-input::-webkit-inner-spin-button,.time-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.settings-hint{font-size:10px;color:rgba(255,255,255,.2);margin-top:4px}
-.toggle-wrap{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
-.toggle-wrap input{opacity:0;width:0;height:0}
-.toggle-track{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
-  background:rgba(255,255,255,.15);border-radius:10px;transition:background .2s}
-.toggle-track::before{content:'';position:absolute;width:16px;height:16px;
-  left:2px;bottom:2px;background:#fff;border-radius:50%;transition:transform .2s}
-.toggle-wrap input:checked+.toggle-track{background:#5b9cf6}
-.toggle-wrap input:checked+.toggle-track::before{transform:translateX(16px)}
-.settings-divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:10px 0}
-.tag{display:inline-flex;align-items:center;gap:3px;background:rgba(255,255,255,.08);
-  border-radius:4px;padding:2px 7px;font-size:11px;color:rgba(255,255,255,.55);margin:2px 4px 2px 0}
-.tag .tag-del{background:none;border:none;color:rgba(255,100,100,.4);cursor:pointer;
-  font-size:12px;padding:0;line-height:1;margin-left:2px}
-.tag .tag-del:hover{color:rgba(255,80,80,.9)}
-.tags-wrap{display:flex;flex-wrap:wrap;margin-top:6px}
-/* color swatches */
-.swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
-.swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;
-  cursor:pointer;padding:0;outline:none;transition:transform .1s,border-color .1s;position:relative}
-.swatch:hover{transform:scale(1.12)}
-.swatch.active{border-color:rgba(255,255,255,.75)}
-.swatch.active::after{content:'';position:absolute;inset:-4px;border-radius:50%;
-  border:1px solid rgba(255,255,255,.2)}
-
 /* stats */
 .stats{display:grid;grid-template-columns:1fr 1fr;padding:16px 20px 8px;row-gap:14px}
 .lbl{font-size:12px;font-weight:500;color:rgba(255,255,255,.55);margin-bottom:3px}
@@ -646,7 +595,7 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
-  <button class="tab-settings" onclick="showSettings()" title="Settings">&#x2699;</button>
+  <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
 <div class="stats">
@@ -688,137 +637,6 @@ canvas{display:block;width:100%}
 </div>
 </div>
 
-<div id="page-settings" style="display:none">
-<div class="settings-header">
-  <button class="settings-back" onclick="showMain()">&#x2190;</button>
-  <span class="settings-title">Settings</span>
-</div>
-<div class="settings-scroll">
-
-<div class="settings-section">
-  <div class="settings-label">Color</div>
-  <div class="swatches" id="color-swatches">
-    <button class="swatch" data-color="#1c1c1e" style="background:#636366" onclick="setColor('#1c1c1e')" title="Gray"></button>
-    <button class="swatch" data-color="#09090b" style="background:#27272a" onclick="setColor('#09090b')" title="Black"></button>
-    <button class="swatch" data-color="#0c1829" style="background:#2563eb" onclick="setColor('#0c1829')" title="Blue"></button>
-    <button class="swatch" data-color="#0d1a0f" style="background:#16a34a" onclick="setColor('#0d1a0f')" title="Green"></button>
-    <button class="swatch" data-color="#160d26" style="background:#7c3aed" onclick="setColor('#160d26')" title="Purple"></button>
-    <button class="swatch" data-color="#220d0d" style="background:#dc2626" onclick="setColor('#220d0d')" title="Red"></button>
-    <button class="swatch" data-color="#0d1a1c" style="background:#0891b2" onclick="setColor('#0d1a1c')" title="Cyan"></button>
-    <button class="swatch" data-color="#1a1400" style="background:#d97706" onclick="setColor('#1a1400')" title="Amber"></button>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Excluded models</div>
-  <div class="settings-desc">Tokens from these models are ignored in all calculations.</div>
-  <div class="tags-wrap" id="excl-list"></div>
-  <div class="settings-row">
-    <input class="settings-input" id="new-excl" placeholder="model name&#x2026;">
-    <button class="sbtn" onclick="addExcl()">Add</button>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Refresh rate</div>
-  <div class="settings-row">
-    <input class="settings-input narrow" id="refresh-interval" type="number" min="5" max="300" onchange="saveSettings()">
-    <span style="font-size:11px;color:rgba(255,255,255,.35)">seconds</span>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Charts</div>
-  <div class="settings-row" style="gap:10px">
-    <span style="font-size:11px;color:rgba(255,255,255,.45);min-width:36px">Style</span>
-    <select class="settings-input narrow" id="chart-style" onchange="saveSettings()">
-      <option value="bars">Bars</option>
-      <option value="line">Line</option>
-      <option value="area">Area</option>
-    </select>
-    <span style="font-size:11px;color:rgba(255,255,255,.45);min-width:42px;margin-left:4px">Period</span>
-    <select class="settings-input narrow" id="chart-period" onchange="saveSettings()">
-      <option value="1d">1d</option>
-      <option value="7d">7d</option>
-      <option value="1m">1 month</option>
-      <option value="all">All</option>
-    </select>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Daily notification</div>
-  <div class="settings-desc">Get a daily summary at a set time with a Flex button.</div>
-  <div class="settings-row" style="gap:10px;flex-wrap:wrap">
-    <label class="toggle-wrap">
-      <input type="checkbox" id="notify-enabled" onchange="saveSettings()">
-      <span class="toggle-track"></span>
-    </label>
-    <span style="font-size:12px;color:rgba(255,255,255,.55);margin-right:14px" id="notify-enabled-label">Off</span>
-    <span style="font-size:11px;color:rgba(255,255,255,.45)">Time</span>
-    <input class="time-input" id="notify-hour" type="number" min="0" max="23" value="20" onchange="saveSettings()">
-    <span style="color:rgba(255,255,255,.35);font-size:14px">:</span>
-    <input class="time-input" id="notify-min" type="number" min="0" max="59" value="0" onchange="saveSettings()">
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Launch at login</div>
-  <div class="settings-desc">Start Tokenbar automatically when you log in.</div>
-  <div class="settings-row" style="gap:10px">
-    <label class="toggle-wrap">
-      <input type="checkbox" id="login-start" onchange="saveSettings()">
-      <span class="toggle-track"></span>
-    </label>
-    <span style="font-size:12px;color:rgba(255,255,255,.55)" id="login-start-label">Off</span>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Alerts</div>
-  <div class="settings-desc">Get notified on thresholds. Supports tokens or cost, daily or all time.</div>
-  <div class="tags-wrap" id="alert-list"></div>
-  <div class="settings-row" style="gap:6px;flex-wrap:wrap">
-    <select class="settings-input narrow" id="alert-type" style="width:56px">
-      <option value="tokens">🔤</option>
-      <option value="cost">💰</option>
-    </select>
-    <input class="settings-input narrow" id="alert-value" type="number" min="0.1" step="1" value="10000" placeholder="value" style="width:72px">
-    <select class="settings-input narrow" id="alert-period" style="width:72px">
-      <option value="today">today</option>
-      <option value="all">all</option>
-    </select>
-    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,.45);cursor:pointer">
-      <input type="checkbox" id="alert-step" style="accent-color:#7c6af7">
-      step
-    </label>
-    <button class="sbtn" onclick="addAlert()">Add</button>
-  </div>
-</div>
-
-<hr class="settings-divider">
-
-<div class="settings-section">
-  <div class="settings-label">Time filter</div>
-  <div class="settings-desc">Reset the start time to include all tokens.</div>
-  <button class="sbtn danger" id="reset-btn" onclick="resetStart()">Reset</button>
-  <div class="settings-hint" id="start-hint"></div>
-</div>
-
-</div>
-</div>
 </body></html>
 """
 
@@ -1020,7 +838,7 @@ function injectData(d) {
 
 function applySettings(s){
   if(s.chart_style){__chartStyle=s.chart_style;
-    var sb=document.getElementById('style-btn');if(sb)sb.textContent=s.chart_style}
+    document.getElementById('style-btn').textContent=s.chart_style}
   if(s.chart_period){__chartPeriod=s.chart_period;
     document.querySelectorAll('.cp').forEach(function(b){
       b.classList.toggle('active',b.getAttribute('data-p')===s.chart_period)
@@ -1028,184 +846,18 @@ function applySettings(s){
   if(s.accent_color){
     document.body.style.background=s.accent_color;
     document.documentElement.style.background=s.accent_color;
-    document.querySelectorAll('.swatch').forEach(function(b){
-      b.classList.toggle('active',b.getAttribute('data-color')===s.accent_color);
-    });
   }
-  var ne=document.getElementById('notify-enabled');
-  if(ne&&s.notify_enabled!==undefined){ne.checked=s.notify_enabled;
-    document.getElementById('notify-enabled-label').textContent=s.notify_enabled?'On':'Off'}
-  var nt=document.getElementById('notify-hour');
-  if(nt&&s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
-  var le=document.getElementById('login-start');
-  if(le&&s.login_start!==undefined){le.checked=s.login_start;
-    document.getElementById('login-start-label').textContent=s.login_start?'On':'Off'}
-  var ae=document.getElementById('alert-enabled');
-  if(ae&&s.alert_enabled!==undefined){ae.checked=s.alert_enabled;
-    document.getElementById('alert-enabled-label').textContent=s.alert_enabled?'On':'Off'}
-  var at=document.getElementById('alert-threshold');
-  if(at&&s.alert_threshold){at.value=s.alert_threshold}
-  var ap=document.getElementById('alert-period');
-  if(ap&&s.alert_period){ap.value=s.alert_period}
-  if(s.alerts){renderAlerts(s.alerts)}
 }
 
-function showMain(){
-  document.getElementById('page-main').style.display='';
-  document.getElementById('page-settings').style.display='none';
-  requestAnimationFrame(function(){
-    try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
-  });
-}
-function showSettings(){
-  document.getElementById('page-main').style.display='none';
-  document.getElementById('page-settings').style.display='';
-  requestAnimationFrame(function(){
-    try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
-  });
-}
+
 function act(n,p){try{window.webkit.messageHandlers[n].postMessage(p||null)}catch(e){}}
 
 function setColor(hex){
-  document.body.style.background=hex;
-  document.documentElement.style.background=hex;
-  document.querySelectorAll('.swatch').forEach(function(b){
-    b.classList.toggle('active',b.getAttribute('data-color')===hex);
-  });
-  var s=collectSettings();s.accent_color=hex;
-  __settings=s;act('saveSettings',JSON.stringify(s));
+  __settings.accent_color=hex;
+  act('saveSettings',JSON.stringify(__settings));
 }
 
-function collectSettings(){
-  var excl=[];
-  document.querySelectorAll('#excl-list .tag').forEach(function(t){
-    var v=t.getAttribute('data-val');if(v)excl.push(v)
-  });
-  var alerts=[];
-  document.querySelectorAll('#alert-list .tag').forEach(function(t){
-    try{alerts.push(JSON.parse(t.getAttribute('data-val')))}catch(e){}
-  });
-  return{
-    excluded_models:excl,
-    refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,
-    chart_style:document.getElementById('chart-style').value,
-    chart_period:document.getElementById('chart-period').value,
-    accent_color:__settings.accent_color||'#1c1c1e',
-    notify_enabled:document.getElementById('notify-enabled').checked,
-    notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),
-    login_start:document.getElementById('login-start').checked,
-    alerts:alerts
-  }
-}
 
-function saveSettings(){
-  var s=collectSettings();
-  __settings=s;applySettings(s);
-  act('saveSettings',JSON.stringify(s));
-}
-
-function addExcl(){
-  var v=document.getElementById('new-excl').value.trim().toLowerCase();
-  if(!v)return;
-  var existing=document.querySelectorAll('#excl-list .tag');
-  for(var i=0;i<existing.length;i++){if(existing[i].getAttribute('data-val')===v)return}
-  var el=document.createElement('span');
-  el.className='tag';el.setAttribute('data-val',v);
-  el.innerHTML=v+'<button class="tag-del" onclick="delExcl(this)" title="Remove">&#x2715;</button>';
-  document.getElementById('excl-list').appendChild(el);
-  document.getElementById('new-excl').value='';
-  saveSettings();
-}
-
-function delExcl(btn){
-  btn.parentElement.remove();
-  saveSettings();
-}
-
-function renderAlerts(alerts){
-  var el=document.getElementById('alert-list');if(!el)return;
-  el.innerHTML='';
-  (alerts||[]).forEach(function(a,i){
-    var icons={'tokens':'🔤','cost':'💰'};
-    var steps={'tokens':'tokens','cost':'$'};
-    var val=a.step?(a.type==='cost'?'$'+a.value:fmtNum(a.value)):(a.type==='cost'?'$'+a.value:fmtNum(a.value));
-    var label=icons[a.type]+' '+val+(a.period==='all'?' · all':'')+(a.step?' · step':'');
-    var sp=document.createElement('span');
-    sp.className='tag';sp.setAttribute('data-val',JSON.stringify(a));
-    sp.innerHTML=label+'<button class="tag-del" onclick="delAlert(this)" title="Remove">&#x2715;</button>';
-    el.appendChild(sp);
-  });
-}
-function fmtNum(n){
-  if(!n)return'0';if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return''+n;
-}
-
-function addAlert(){
-  var type=document.getElementById('alert-type').value;
-  var val=parseFloat(document.getElementById('alert-value').value);
-  if(!val||val<=0)return;
-  var period=document.getElementById('alert-period').value;
-  var step=document.getElementById('alert-step').checked;
-  document.getElementById('alert-value').value='';
-  document.getElementById('alert-step').checked=false;
-  var existing=__settings.alerts||[];
-  existing.push({type:type,value:val,period:period,step:step});
-  __settings.alerts=existing;
-  renderAlerts(existing);
-  saveSettings();
-}
-function delAlert(btn){
-  var tag=btn.parentElement;
-  var idx=Array.from(tag.parentElement.children).indexOf(tag);
-  var alerts=__settings.alerts||[];
-  alerts.splice(idx,1);
-  __settings.alerts=alerts;
-  renderAlerts(alerts);
-  saveSettings();
-}
-
-function resetStart(){
-  var btn=document.getElementById('reset-btn');
-  if(btn.getAttribute('data-confirm')!=='1'){
-    btn.textContent='Confirm?';btn.setAttribute('data-confirm','1');
-    setTimeout(function(){btn.textContent='Reset';btn.removeAttribute('data-confirm')},3000);
-    return;
-  }
-  act('saveSettings',JSON.stringify({reset_start:true}));
-  document.getElementById('start-hint').textContent='Reset. Restart recommended.';
-  btn.textContent='Reset';btn.removeAttribute('data-confirm');
-}
-
-function renderSettings(s){
-  var el=document.getElementById('excl-list');el.innerHTML='';
-  (s.excluded_models||[]).forEach(function(v){
-    var sp=document.createElement('span');
-    sp.className='tag';sp.setAttribute('data-val',v);
-    sp.innerHTML=v+'<button class="tag-del" onclick="delExcl(this)" title="Remove">&#x2715;</button>';
-    el.appendChild(sp);
-  });
-  document.getElementById('refresh-interval').value=s.refresh_interval||15;
-  document.getElementById('chart-style').value=s.chart_style||'bars';
-  document.getElementById('chart-period').value=s.chart_period||'1m';
-  var color=s.accent_color||'#1c1c1e';
-  document.body.style.background=color;
-  document.documentElement.style.background=color;
-  document.querySelectorAll('.swatch').forEach(function(b){
-    b.classList.toggle('active',b.getAttribute('data-color')===color);
-  });
-  renderAlerts(s.alerts);
-}
-
-(function(){
-  var origShow=showSettings;
-  showSettings=function(){
-    origShow();
-    if(__settings&&Object.keys(__settings).length)renderSettings(__settings);
-    requestAnimationFrame(function(){
-      try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
-    });
-  };
-})();
 """
 
 MODELS_HTML_TMPL = """\
@@ -1331,6 +983,251 @@ setPeriod('all');
 </script></body></html>
 """
 
+SETTINGS_HTML_TMPL = """\
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:400px;height:540px;background:#1c1c1e;color:#fff;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+  overflow:hidden;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+.settings-header{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}
+.settings-title{font-size:13px;font-weight:600;color:rgba(255,255,255,.7)}
+.settings-scroll{padding:10px 16px 16px;overflow-y:auto;flex:1}
+.settings-scroll::-webkit-scrollbar{width:4px}
+.settings-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:2px}
+.settings-section{margin-bottom:18px}
+.settings-label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px}
+.settings-desc{font-size:10px;color:rgba(255,255,255,.22);margin-bottom:8px;line-height:1.5}
+.settings-row{display:flex;gap:6px;align-items:center;margin-top:6px}
+.sbtn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.7);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.sbtn:hover{background:rgba(255,255,255,.14);color:#fff}
+.sbtn.danger{border-color:rgba(255,80,80,.2);color:rgba(255,100,100,.6)}
+.sbtn.danger:hover{background:rgba(255,60,60,.12);color:rgba(255,90,90,.9)}
+.settings-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 8px;color:#fff;font-size:12px;outline:none;font-family:inherit;width:100%}
+.settings-input:focus{border-color:rgba(255,255,255,.28)}
+.settings-input.narrow{width:72px}
+.time-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:5px 4px;color:#fff;font-size:13px;outline:none;font-family:inherit;width:40px;text-align:center}
+.time-input:focus{border-color:rgba(255,255,255,.28)}
+.time-input::-webkit-inner-spin-button,.time-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.settings-hint{font-size:10px;color:rgba(255,255,255,.2);margin-top:4px}
+.toggle-wrap{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle-wrap input{opacity:0;width:0;height:0}
+.toggle-track{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.15);border-radius:10px;transition:background .2s}
+.toggle-track::before{content:'';position:absolute;width:16px;height:16px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:transform .2s}
+.toggle-wrap input:checked+.toggle-track{background:#5b9cf6}
+.toggle-wrap input:checked+.toggle-track::before{transform:translateX(16px)}
+.settings-divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:10px 0}
+.tag{display:inline-flex;align-items:center;gap:3px;background:rgba(255,255,255,.08);border-radius:4px;padding:2px 7px;font-size:11px;color:rgba(255,255,255,.55);margin:2px 4px 2px 0}
+.tag .tag-del{background:none;border:none;color:rgba(255,100,100,.4);cursor:pointer;font-size:12px;padding:0;line-height:1;margin-left:2px}
+.tag .tag-del:hover{color:rgba(255,80,80,.9)}
+.tags-wrap{display:flex;flex-wrap:wrap;margin-top:6px}
+.swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;outline:none;transition:transform .1s,border-color .1s;position:relative}
+.swatch:hover{transform:scale(1.12)}
+.swatch.active{border-color:rgba(255,255,255,.75)}
+.swatch.active::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid rgba(255,255,255,.2)}
+</style></head><body>
+<div class="settings-header">
+  <span class="settings-title">Settings</span>
+</div>
+<div class="settings-scroll">
+
+<div class="settings-section">
+  <div class="settings-label">Color</div>
+  <div class="swatches" id="color-swatches">
+    <button class="swatch" data-color="#1c1c1e" style="background:#636366" onclick="setColor('#1c1c1e')" title="Gray"></button>
+    <button class="swatch" data-color="#09090b" style="background:#27272a" onclick="setColor('#09090b')" title="Black"></button>
+    <button class="swatch" data-color="#0c1829" style="background:#2563eb" onclick="setColor('#0c1829')" title="Blue"></button>
+    <button class="swatch" data-color="#0d1a0f" style="background:#16a34a" onclick="setColor('#0d1a0f')" title="Green"></button>
+    <button class="swatch" data-color="#160d26" style="background:#7c3aed" onclick="setColor('#160d26')" title="Purple"></button>
+    <button class="swatch" data-color="#220d0d" style="background:#dc2626" onclick="setColor('#220d0d')" title="Red"></button>
+    <button class="swatch" data-color="#0d1a1c" style="background:#0891b2" onclick="setColor('#0d1a1c')" title="Cyan"></button>
+    <button class="swatch" data-color="#1a1400" style="background:#d97706" onclick="setColor('#1a1400')" title="Amber"></button>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Excluded models</div>
+  <div class="settings-desc">Tokens from these models are ignored in all calculations.</div>
+  <div class="tags-wrap" id="excl-list"></div>
+  <div class="settings-row">
+    <input class="settings-input" id="new-excl" placeholder="model name&#x2026;">
+    <button class="sbtn" onclick="addExcl()">Add</button>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Refresh rate</div>
+  <div class="settings-row">
+    <input class="settings-input narrow" id="refresh-interval" type="number" min="5" max="300" onchange="saveSettings()">
+    <span style="font-size:11px;color:rgba(255,255,255,.35)">seconds</span>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Charts</div>
+  <div class="settings-row" style="gap:10px">
+    <span style="font-size:11px;color:rgba(255,255,255,.45);min-width:36px">Style</span>
+    <select class="settings-input narrow" id="chart-style" onchange="saveSettings()">
+      <option value="bars">Bars</option>
+      <option value="line">Line</option>
+      <option value="area">Area</option>
+    </select>
+    <span style="font-size:11px;color:rgba(255,255,255,.45);min-width:42px;margin-left:4px">Period</span>
+    <select class="settings-input narrow" id="chart-period" onchange="saveSettings()">
+      <option value="1d">1d</option>
+      <option value="7d">7d</option>
+      <option value="1m">1 month</option>
+      <option value="all">All</option>
+    </select>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Daily notification</div>
+  <div class="settings-desc">Get a daily summary at a set time with a Flex button.</div>
+  <div class="settings-row" style="gap:10px;flex-wrap:wrap">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="notify-enabled" onchange="saveSettings()">
+      <span class="toggle-track"></span>
+    </label>
+    <span style="font-size:12px;color:rgba(255,255,255,.55);margin-right:14px" id="notify-enabled-label">Off</span>
+    <span style="font-size:11px;color:rgba(255,255,255,.45)">Time</span>
+    <input class="time-input" id="notify-hour" type="number" min="0" max="23" value="20" onchange="saveSettings()">
+    <span style="color:rgba(255,255,255,.35);font-size:14px">:</span>
+    <input class="time-input" id="notify-min" type="number" min="0" max="59" value="0" onchange="saveSettings()">
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Launch at login</div>
+  <div class="settings-desc">Start Tokenbar automatically when you log in.</div>
+  <div class="settings-row" style="gap:10px">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="login-start" onchange="saveSettings()">
+      <span class="toggle-track"></span>
+    </label>
+    <span style="font-size:12px;color:rgba(255,255,255,.55)" id="login-start-label">Off</span>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Alerts</div>
+  <div class="settings-desc">Get notified on thresholds. Supports tokens or cost, daily or all time.</div>
+  <div class="tags-wrap" id="alert-list"></div>
+  <div class="settings-row" style="gap:6px;flex-wrap:wrap">
+    <select class="settings-input narrow" id="alert-type" style="width:56px">
+      <option value="tokens">🔤</option>
+      <option value="cost">💰</option>
+    </select>
+    <input class="settings-input narrow" id="alert-value" type="number" min="0.1" step="1" value="10000" placeholder="value" style="width:72px">
+    <select class="settings-input narrow" id="alert-period" style="width:72px">
+      <option value="today">today</option>
+      <option value="all">all</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,.45);cursor:pointer">
+      <input type="checkbox" id="alert-step" style="accent-color:#7c6af7">
+      step
+    </label>
+    <button class="sbtn" onclick="addAlert()">Add</button>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Time filter</div>
+  <div class="settings-desc">Reset the start time to include all tokens.</div>
+  <button class="sbtn danger" id="reset-btn" onclick="resetStart()">Reset</button>
+  <div class="settings-hint" id="start-hint"></div>
+</div>
+
+</div>
+<script>
+const SETTINGS = SETTINGS_PLACEHOLDER;
+function act(n,p){try{window.webkit.messageHandlers[n].postMessage(p||null)}catch(e){}}
+function fmtNum(n){if(!n)return'0';if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return''+n}
+function setColor(hex){SETTINGS.accent_color=hex;act('saveSettings',JSON.stringify(SETTINGS))}
+function collectSettings(){
+  var excl=[];document.querySelectorAll('#excl-list .tag').forEach(function(t){var v=t.getAttribute('data-val');if(v)excl.push(v)});
+  var alerts=[];document.querySelectorAll('#alert-list .tag').forEach(function(t){try{alerts.push(JSON.parse(t.getAttribute('data-val')))}catch(e){}});
+  return{excluded_models:excl,refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,chart_style:document.getElementById('chart-style').value,chart_period:document.getElementById('chart-period').value,accent_color:SETTINGS.accent_color||'#1c1c1e',notify_enabled:document.getElementById('notify-enabled').checked,notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),login_start:document.getElementById('login-start').checked,alerts:alerts}
+}
+function saveSettings(){var s=collectSettings();Object.assign(SETTINGS,s);act('saveSettings',JSON.stringify(s))}
+function addExcl(){
+  var v=document.getElementById('new-excl').value.trim().toLowerCase();
+  if(!v)return;
+  for(var i=0;i<document.querySelectorAll('#excl-list .tag').length;i++){if(document.querySelectorAll('#excl-list .tag')[i].getAttribute('data-val')===v)return}
+  var el=document.createElement('span');el.className='tag';el.setAttribute('data-val',v);
+  el.innerHTML=v+'<button class="tag-del" onclick="delExcl(this)" title="Remove">&#x2715;</button>';
+  document.getElementById('excl-list').appendChild(el);document.getElementById('new-excl').value='';saveSettings()
+}
+function delExcl(btn){btn.parentElement.remove();saveSettings()}
+function renderAlerts(alerts){
+  var el=document.getElementById('alert-list');if(!el)return;
+  el.innerHTML='';(alerts||[]).forEach(function(a,i){
+    var icons={'tokens':'🔤','cost':'💰'};
+    var val=a.step?(a.type==='cost'?'$'+a.value:fmtNum(a.value)):(a.type==='cost'?'$'+a.value:fmtNum(a.value));
+    var sp=document.createElement('span');sp.className='tag';sp.setAttribute('data-val',JSON.stringify(a));
+    sp.innerHTML=icons[a.type]+' '+val+(a.period==='all'?' · all':'')+(a.step?' · step':'')+'<button class="tag-del" onclick="delAlert(this)" title="Remove">&#x2715;</button>';
+    el.appendChild(sp)
+  })
+}
+function addAlert(){
+  var type=document.getElementById('alert-type').value;
+  var val=parseFloat(document.getElementById('alert-value').value);
+  if(!val||val<=0)return;
+  var period=document.getElementById('alert-period').value;
+  var step=document.getElementById('alert-step').checked;
+  document.getElementById('alert-value').value='';document.getElementById('alert-step').checked=false;
+  var existing=SETTINGS.alerts||[];existing.push({type:type,value:val,period:period,step:step});
+  SETTINGS.alerts=existing;renderAlerts(existing);saveSettings()
+}
+function delAlert(btn){
+  var tag=btn.parentElement;
+  var idx=Array.from(tag.parentElement.children).indexOf(tag);
+  var alerts=SETTINGS.alerts||[];alerts.splice(idx,1);
+  SETTINGS.alerts=alerts;renderAlerts(alerts);saveSettings()
+}
+function resetStart(){
+  var btn=document.getElementById('reset-btn');
+  if(btn.getAttribute('data-confirm')!=='1'){btn.textContent='Confirm?';btn.setAttribute('data-confirm','1');setTimeout(function(){btn.textContent='Reset';btn.removeAttribute('data-confirm')},3000);return}
+  act('saveSettings',JSON.stringify({reset_start:true}));
+  document.getElementById('start-hint').textContent='Reset. Restart recommended.';
+  btn.textContent='Reset';btn.removeAttribute('data-confirm')
+}
+function renderSettings(s){
+  var el=document.getElementById('excl-list');el.innerHTML='';
+  (s.excluded_models||[]).forEach(function(v){var sp=document.createElement('span');sp.className='tag';sp.setAttribute('data-val',v);sp.innerHTML=v+'<button class="tag-del" onclick="delExcl(this)" title="Remove">&#x2715;</button>';el.appendChild(sp)});
+  document.getElementById('refresh-interval').value=s.refresh_interval||15;
+  document.getElementById('chart-style').value=s.chart_style||'bars';
+  document.getElementById('chart-period').value=s.chart_period||'1m';
+  var color=s.accent_color||'#1c1c1e';
+  document.body.style.background=color;document.documentElement.style.background=color;
+  document.querySelectorAll('.swatch').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-color')===color)});
+  renderAlerts(s.alerts);
+  document.getElementById('notify-enabled').checked=s.notify_enabled||false;
+  document.getElementById('notify-enabled-label').textContent=s.notify_enabled?'On':'Off';
+  if(s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
+  document.getElementById('login-start').checked=s.login_start||false;
+  document.getElementById('login-start-label').textContent=s.login_start?'On':'Off'
+}
+renderSettings(SETTINGS);
+</script></body></html>
+"""
+
 
 # ── PyObjC ────────────────────────────────────────────────────────────────────
 
@@ -1344,6 +1241,7 @@ class MsgHandler(NSObject):
         elif n == "models"  and self._app: self._app.show_models_window()
         elif n == "flex"    and self._app: self._app.flex()
         elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
+        elif n == "settings"  and self._app: self._app.show_settings_window()
 
 
 class NavDelegate(NSObject):
@@ -1357,6 +1255,7 @@ class AppDelegate(NSObject):
     def applicationDidFinishLaunching_(self, _):
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self._models_win = None
+        self._settings_win = None
         self._timer = None
         self._notified_date = None
         self._alerted_threshold = {}
@@ -1375,7 +1274,7 @@ class AppDelegate(NSObject):
 
         cfg = WKWebViewConfiguration.alloc().init()
         uc  = cfg.userContentController()
-        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex"):
+        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings"):
             uc.addScriptMessageHandler_name_(self._msg, n)
 
 
@@ -1656,6 +1555,45 @@ All time: {fmt(total)} tokens""" + (f"""
         NSApp.activateIgnoringOtherApps_(True)
         self._models_win = win
         self._models_wv  = wv
+
+    @objc.python_method
+    def show_settings_window(self):
+        html     = SETTINGS_HTML_TMPL.replace("SETTINGS_PLACEHOLDER", json.dumps(_SETTINGS))
+        dark     = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+
+        if self._settings_win is not None:
+            try:
+                self._settings_wv.loadHTMLString_baseURL_(html, NSURL.fileURLWithPath_(str(Path.home()) + "/"))
+                self._settings_win.makeKeyAndOrderFront_(None)
+                NSApp.activateIgnoringOtherApps_(True)
+                return
+            except Exception:
+                self._settings_win = None
+
+        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(360, 200, 400, 540), 15, NSBackingStoreBuffered, False)
+        win.setTitle_("Settings")
+        win.setAppearance_(dark)
+        win.setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.11, 0.11, 0.11, 1.0))
+
+        cfg = WKWebViewConfiguration.alloc().init()
+        uc  = cfg.userContentController()
+        for n in ("saveSettings",):
+            uc.addScriptMessageHandler_name_(self._msg, n)
+
+        wv = WKWebView.alloc().initWithFrame_configuration_(
+            NSMakeRect(0, 0, 400, 540), cfg)
+        wv.setOpaque_(False)
+        wv.setBackgroundColor_(NSColor.clearColor())
+        wv.setAutoresizingMask_(18)
+        wv.loadHTMLString_baseURL_(html, NSURL.fileURLWithPath_(str(Path.home()) + "/"))
+
+        win.contentView().addSubview_(wv)
+        win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+        self._settings_win = win
+        self._settings_wv  = wv
 
 
 if __name__ == "__main__":
