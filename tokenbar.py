@@ -4,6 +4,8 @@
 import json
 import sqlite3
 import time
+import urllib.parse
+import webbrowser
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -385,19 +387,24 @@ def fetch():
         dates = sorted(set().union(*[d.keys() for d in dicts]))
         return [{"date": d, "cost": sum(dd.get(d, 0.0) for dd in dicts)} for d in dates]
 
-    all_models = {}
+    all_models      = {}
+    all_models_today = {}
     for src in (oc["models"], cc["models"], cx["models"]):
         for k, v in src.items():
             all_models[k] = all_models.get(k, 0) + v
+    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {})):
+        for k, v in src.items():
+            all_models_today[k] = all_models_today.get(k, 0) + v
 
     return {
         "all": {
             "today_tok":  oc["today"] + cc["today"] + cx["today"],
-            "week_tok":   oc["week"]  + cc["week"]  + cx["week"],
+            "week_tok":   oc["week"]  + cc["week" ] + cx["week"],
             "all_tok":    oc["total"] + cc["total"] + cx["total"],
             "today_sess": None,
             "all_sess":   None,
             "top_model":  _top(all_models),
+            "top_model_today": _top(all_models_today),
             "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"]),
             "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"]),
             "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
@@ -572,9 +579,9 @@ canvas{display:block;width:100%}
 /* footer */
 .footer{border-top:1px solid rgba(255,255,255,.08);display:flex;padding:4px 8px}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
-  font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:left}
+  font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:center}
 .btn:hover{background:rgba(255,255,255,.08)}
-.btn-q{color:rgba(255,255,255,.3);text-align:right}
+.btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
 <div id="page-main">
@@ -620,6 +627,7 @@ canvas{display:block;width:100%}
 
 <div class="footer">
   <button class="btn" onclick="act('refresh')">&#x21BA; Refresh</button>
+  <button class="btn" onclick="act('flex')">&#x1F4E2; Flex</button>
   <button class="btn btn-q" onclick="act('quit')">Quit</button>
 </div>
 </div>
@@ -1155,6 +1163,7 @@ class MsgHandler(NSObject):
         elif n == "quit":                  NSApp.terminate_(None)
         elif n == "resize"  and self._app: self._app.resize_popover(int(msg.body()))
         elif n == "models"  and self._app: self._app.show_models_window()
+        elif n == "flex"    and self._app: self._app.flex()
         elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
 
 
@@ -1183,7 +1192,7 @@ class AppDelegate(NSObject):
 
         cfg = WKWebViewConfiguration.alloc().init()
         uc  = cfg.userContentController()
-        for n in ("refresh", "quit", "resize", "models", "saveSettings"):
+        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex"):
             uc.addScriptMessageHandler_name_(self._msg, n)
 
 
@@ -1281,6 +1290,36 @@ class AppDelegate(NSObject):
             self._start_timer()
             self.inject_data()
         except: pass
+
+    @objc.python_method
+    def flex(self):
+        data = fetch()
+        if not data:
+            return
+        s = data["all"]
+        today = s["today_tok"]
+        total = s["all_tok"]
+        cost  = s["cost_today"]
+        model_today = s.get("top_model_today") or ""
+        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code"), ("codex", "Codex")) if data.get(key, {}).get("today_tok", 0) > 0]
+        def fmt(n):
+            if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+            if n >= 1_000:    return f"{n/1_000:.1f}k"
+            return str(n)
+        cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else None
+        date_str = datetime.now().strftime("%B %d, %Y")
+        site = "https://azerdsq131.github.io/tokenbar/"
+        text = f"""📊 Stats of the day — {date_str}
+Today: {fmt(today)} tokens
+All time: {fmt(total)} tokens""" + (f"""
+🔥 Top model today: {model_today}""" if model_today else "") + (f"""
+💸 Cost today: {cost_s}""" if cost_s else "") + (f"""
+📱 Via: {", ".join(sources)}""" if sources else "") + f"""
+
+👇 Get yours:
+{site}"""
+        url = "https://x.com/intent/tweet?text=" + urllib.parse.quote(text)
+        webbrowser.open(url)
 
     @objc.python_method
     def show_models_window(self):

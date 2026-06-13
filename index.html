@@ -54,10 +54,9 @@
 
   /* ── Hero ── */
   .hero {
-    min-height: 100vh;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    text-align: center; padding: 100px 24px 80px;
-    position: relative; overflow: hidden;
+    text-align: center; padding: 100px 24px 0;
+    position: relative;
   }
   .hero::before {
     content: ''; position: absolute; top: -200px; left: 50%; transform: translateX(-50%);
@@ -147,23 +146,42 @@
     pointer-events: none;
   }
 
-  /* ── Preview row ── */
+  /* ── Preview 3D carousel ── */
   .previews {
-    display: flex; align-items: center; justify-content: center;
-    gap: 20px; margin-top: 24px;
+    perspective: 1100px;
+    height: 680px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 100px;
   }
-  .preview { flex-shrink: 0; transition: transform .3s, opacity .3s; }
-  .preview-side {
-    transform: scale(.78);
-    opacity: .5;
-    filter: saturate(.6);
+  .carousel {
+    position: relative;
+    width: 0; height: 0;
+    transform-style: preserve-3d;
+    animation: spin 60s linear infinite;
   }
-  .preview-side:hover {
-    transform: scale(.82);
-    opacity: .7;
-    filter: saturate(.85);
+
+  .preview {
+    position: absolute;
+    width: 300px;
+    left: -150px;
+    top: -195px;
+    backface-visibility: hidden;
+    transform: rotateY(calc(var(--i) * 18deg)) translateZ(580px);
   }
-  .preview-center { z-index: 2; }
+  .preview .window-wrap {
+    width: 300px;
+    transform: scale(.48);
+    transform-origin: top center;
+  }
+  .preview .window-body iframe {
+    width: 340px;
+    height: 390px;
+  }
+  @keyframes spin {
+    to { transform: rotateY(-360deg); }
+  }
 
   /* ── Sections ── */
   section { padding: 96px 24px; }
@@ -254,6 +272,22 @@
   pre .kw { color: var(--accent2); }
   pre .st { color: var(--green); }
 
+  /* ── Flex section ── */
+  #flex { background: var(--surface); }
+  .flex-cols {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px; margin-top: 52px;
+  }
+  .flex-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 26px;
+    transition: border-color .2s, transform .2s;
+  }
+  .flex-item:hover { border-color: rgba(124,106,247,.28); transform: translateY(-2px); }
+  .flex-icon { font-size: 22px; display: block; margin-bottom: 14px; }
+  .flex-item h4 { font-size: 14px; font-weight: 600; margin-bottom: 7px; }
+  .flex-item p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
   /* ── Footer ── */
   footer {
     border-top: 1px solid var(--border); padding: 40px 24px;
@@ -267,9 +301,12 @@
     nav { padding: 0 16px; }
     .nav-links { display: none; }
     section { padding: 72px 20px; }
-    .previews { flex-direction: column; gap: 12px; }
-    .preview-side { display: none; }
-    .preview-center .window-wrap { transform: scale(.85); transform-origin: top center; }
+    .previews { perspective: none; height: auto; }
+    .carousel { animation: none; width: auto; height: auto; }
+    .preview { position: static; left: auto; top: auto; width: auto; backface-visibility: visible; transform: none !important; display: none; }
+    .preview:first-child { display: block; }
+    .preview .window-wrap { transform: scale(.85); transform-origin: top center; width: 340px; }
+    .preview .window-body iframe { width: 340px; }
   }
 </style>
 </head>
@@ -282,6 +319,7 @@
     <a href="#features">Features</a>
     <a href="#sources">Sources</a>
     <a href="#install">Install</a>
+    <a href="#flex">Flex</a>
   </div>
   <a class="nav-gh" href="https://github.com/AZERDSQ131/tokenbar" target="_blank">
     <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -296,7 +334,7 @@
     macOS only
   </div>
   <h1>Know exactly how much<br>your <span class="hl">AI usage costs</span>.</h1>
-  <p class="hero-sub">A menu bar app that tracks tokens and spend across Claude Code and Codex — live, locally, for free.</p>
+  <p class="hero-sub">A menu bar app that tracks tokens and spend across Claude Code, Codex, and OpenCode — live, locally, for free. Flex your stats on X with one click.</p>
 
   <div class="hero-actions">
     <a class="btn-primary" href="#install">
@@ -306,32 +344,9 @@
     <a class="btn-secondary" href="https://github.com/AZERDSQ131/tokenbar" target="_blank">View on GitHub</a>
   </div>
 
-  <!-- Real app embed -->
+  <!-- Real app embed → 3D carousel (20 iframes generated by JS) -->
   <div class="previews">
-    <div class="preview preview-side">
-      <div class="window-wrap">
-        <div class="window-body">
-          <iframe id="app-frame-1" srcdoc="" scrolling="no"></iframe>
-        </div>
-        <div class="window-glow"></div>
-      </div>
-    </div>
-    <div class="preview preview-center">
-      <div class="window-wrap">
-        <div class="window-body">
-          <iframe id="app-frame-2" srcdoc="" scrolling="no"></iframe>
-        </div>
-        <div class="window-glow"></div>
-      </div>
-    </div>
-    <div class="preview preview-side">
-      <div class="window-wrap">
-        <div class="window-body">
-          <iframe id="app-frame-3" srcdoc="" scrolling="no"></iframe>
-        </div>
-        <div class="window-glow"></div>
-      </div>
-    </div>
+    <div class="carousel" id="carousel"></div>
   </div>
 </section>
 
@@ -378,11 +393,6 @@
         <p>Per-model pricing for Anthropic, OpenAI, DeepSeek and more. Handles all 4 Claude token types including cache reads and writes.</p>
       </div>
       <div class="feature-card">
-        <span class="fi">📈</span>
-        <h3>30-day history charts</h3>
-        <p>Token usage and estimated cost over 30 days. Switch between bars, line, and area styles. Hover for daily tooltips.</p>
-      </div>
-      <div class="feature-card">
         <span class="fi">🔍</span>
         <h3>Per-model breakdown</h3>
         <p>See every model you've used, ranked by tokens. Filter by today, 7 days, 1 month, or all time. Live search.</p>
@@ -396,6 +406,11 @@
         <span class="fi">🎨</span>
         <h3>Themeable background</h3>
         <p>Eight color options for the popover window. Gray, black, blue, green, purple, red, cyan, amber.</p>
+      </div>
+      <div class="feature-card">
+        <span class="fi">📣</span>
+        <h3>Flex on X / Twitter</h3>
+        <p>Share your daily AI coding stats with one click. Opens an X.com intent tweet with today's tokens, all-time usage, top model, and cost.</p>
       </div>
     </div>
   </div>
@@ -474,6 +489,32 @@
   </div>
 </section>
 
+<!-- Flex -->
+<section id="flex">
+  <div class="container">
+    <div class="section-label">Share your stats</div>
+    <h2>Flex on X / Twitter<br>in one click.</h2>
+    <p class="section-sub">Show off your AI coding stats without leaving the menu bar. Opens an X.com intent tweet pre-filled with your daily numbers.</p>
+    <div class="flex-cols">
+      <div class="flex-item">
+        <span class="flex-icon">📊</span>
+        <h4>Daily snapshot</h4>
+        <p>Today's tokens, all-time usage, top model, and cost — auto-filled in the tweet.</p>
+      </div>
+      <div class="flex-item">
+        <span class="flex-icon">🔌</span>
+        <h4>All sources supported</h4>
+        <p>Detects which apps you used today — OpenCode, Claude Code, Codex — and lists them.</p>
+      </div>
+      <div class="flex-item">
+        <span class="flex-icon">⚡</span>
+        <h4>Zero setup</h4>
+        <p>Click the Flex button in the popover and your browser opens the tweet ready to post.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <footer>
   <span class="footer-dia">◆</span>
   <div style="margin-bottom:8px">Tokenbar · Built with PyObjC · macOS only · MIT License</div>
@@ -487,98 +528,90 @@
 <script>
 // ── Build the iframe srcdoc with the real app code + fake data ──────────────
 
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-var _seed = 1;
-function seededRand() {
-  _seed = (_seed * 9301 + 49297) % 233280;
-  return _seed / 233280;
-}
 function seededInt(min, max, seed) {
-  _seed = seed || 1;
-  _seed = (_seed * 9301 + 49297) % 233280;
-  return Math.floor((_seed / 233280) * (max - min + 1)) + min;
+  var s = seed || 1;
+  s = (s * 9301 + 49297) % 233280;
+  return Math.floor((s / 233280) * (max - min + 1)) + min;
 }
 
-function makeDailyTokens(variation) {
-  const base = [
+function makeDaily(seed, mult) {
+  var base = [
     88000,140000,210000,95000,175000,260000,72000,
     155000,230000,128000,185000,310000,98000,172000,
     245000,138000,218000,295000,145000,225000,168000,
     290000,82000,188000,270000,125000,205000,340000,
     185000,412000
   ];
-  const start = new Date(); start.setDate(start.getDate() - 29);
-  return base.map((tok, i) => {
-    const d = new Date(start); d.setDate(d.getDate() + i);
-    return { date: d.toISOString().slice(0,10), tokens: Math.round(tok * variation) };
+  var start = new Date(); start.setDate(start.getDate() - 29);
+  return base.map(function(tok, i) {
+    var d = new Date(start); d.setDate(d.getDate() + i);
+    return { date: d.toISOString().slice(0,10), tokens: Math.round(tok * mult / 10 + seededInt(1, 5, seed + i * 7)) };
   });
 }
 
-function makeDailyCost(daily, rate) {
-  return daily.map(d => ({ date: d.date, cost: d.tokens * rate }));
+function makeCost(daily, rate) {
+  return daily.map(function(d) { return { date: d.date, cost: d.tokens * rate }; });
 }
 
-function makeFrameData(seed) {
-  var v = seededInt(5, 15, seed) / 10;
-  var v2 = seededInt(4, 18, seed + 100) / 10;
-  var v3 = seededInt(3, 20, seed + 200) / 10;
-  var allDaily = makeDailyTokens(v);
-  var allCost = makeDailyCost(allDaily, 0.0000074);
-  var claudeDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * v2 / 10 * 9) }; });
-  var claudeCost = makeDailyCost(claudeDaily, 0.0000082);
-  var codexDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * v3 / 10) }; });
-  var codexCost = makeDailyCost(codexDaily, 0.000003);
+function makeData(seed) {
+  var allDaily = makeDaily(seed, seededInt(8, 14, seed));
+  var cliPct = seededInt(60, 90, seed + 100);
+  var cxPct  = seededInt(5, 25, seed + 200);
+  var claudeDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * cliPct / 100) }; });
+  var codexDaily  = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * cxPct / 100) }; });
+  var opencodeDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * (100 - cliPct - cxPct) / 100) }; });
 
   function sum(arr) { return arr.reduce(function(s, d) { return s + d.tokens; }, 0); }
-  function sumCost(arr) { return arr.reduce(function(s, d) { return s + d.cost; }, 0); }
+  function sumC(arr) { return arr.reduce(function(s, d) { return s + d.cost; }, 0); }
+
+  function pick(arr) { return arr[arr.length - 1]; }
 
   return {
     all: {
-      today_tok:  allDaily[allDaily.length-1].tokens,
+      today_tok:  pick(allDaily).tokens,
       week_tok:   allDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
       all_tok:    sum(allDaily),
-      cost_today: allCost[allCost.length-1].cost,
-      cost_all:   sumCost(allCost),
+      cost_today: pick(allDaily).tokens * 0.0000074,
+      cost_all:   sum(allDaily) * 0.0000074,
       cost_exact: false,
-      top_model:  'claude-sonnet-4-6',
+      top_model:  'sonnet-4',
+      top_model_today: 'sonnet-4',
       daily:      allDaily,
-      daily_cost: allCost
+      daily_cost: makeCost(allDaily, 0.0000074)
     },
     claude_code: {
-      today_tok:  claudeDaily[claudeDaily.length-1].tokens,
+      today_tok:  pick(claudeDaily).tokens,
       week_tok:   claudeDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
       all_tok:    sum(claudeDaily),
-      cost_today: claudeCost[claudeCost.length-1].cost,
-      cost_all:   sumCost(claudeCost),
+      cost_today: pick(claudeDaily).tokens * 0.0000082,
+      cost_all:   sum(claudeDaily) * 0.0000082,
       cost_exact: true,
-      top_model:  'claude-sonnet-4-6',
+      top_model:  'sonnet-4',
       daily:      claudeDaily,
-      daily_cost: claudeCost
+      daily_cost: makeCost(claudeDaily, 0.0000082)
     },
     codex: {
-      today_tok:  codexDaily[codexDaily.length-1].tokens,
+      today_tok:  pick(codexDaily).tokens,
       week_tok:   codexDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
       all_tok:    sum(codexDaily),
-      cost_today: codexDaily.length > 0 ? codexCost[codexCost.length-1].cost : 0,
-      cost_all:   sumCost(codexCost),
+      cost_today: pick(codexDaily).tokens * 0.000003,
+      cost_all:   sum(codexDaily) * 0.000003,
       cost_exact: false,
       top_model:  'o4-mini',
       daily:      codexDaily,
-      daily_cost: codexCost
+      daily_cost: makeCost(codexDaily, 0.000003)
     },
     opencode: {
-      today_tok:  0, week_tok: 0, all_tok: 0,
-      cost_today: 0, cost_all: 0, cost_exact: false,
-      top_model: '—', daily: [], daily_cost: []
+      today_tok:  32000, week_tok: 180000, all_tok: 620000,
+      cost_today: 0.18, cost_all: 3.45, cost_exact: true,
+      top_model: 'deepseek-v4-flash',
+      daily: opencodeDaily, daily_cost: makeCost(opencodeDaily, 0.000002)
     }
   };
 }
 
 // ── Real app HTML (exact copy from tokenbar.py MAIN_HTML) ──────────────────
-function appHTML(initialTab) { return `<!DOCTYPE html><html><head><meta charset="utf-8">
+var APP_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:340px;background:#1c1c1e;color:#fff;
@@ -616,9 +649,9 @@ canvas{display:block;width:100%}
   text-decoration:underline;text-decoration-color:rgba(255,255,255,.15);text-underline-offset:2px}
 .footer{border-top:1px solid rgba(255,255,255,.08);display:flex;padding:4px 8px}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
-  font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:left}
+  font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:center}
 .btn:hover{background:rgba(255,255,255,.08)}
-.btn-q{color:rgba(255,255,255,.3);text-align:right}
+.btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 <div class="tabs">
   <div class="tab active" data-tab="all"        onclick="switchTab('all')">All</div>
@@ -652,90 +685,107 @@ canvas{display:block;width:100%}
 </div>
 <div class="footer">
   <button class="btn">&#x21BA; Refresh</button>
+  <button class="btn">&#x1F4E2; Flex</button>
   <button class="btn btn-q">Quit</button>
 </div>
 <script>
-let __data=null,__tab=initialTab||'all',__chartStyle='bars',__chartPeriod='1m';
-let __lastDaily=[],__lastDailyCost=[],__chartHits=[],__chartHits2=[];
-const STYLES=['bars','line','area'];
+var __tab=__TAB__,__chartStyle='bars',__chartPeriod='1m',__data=null;
+var __lastDaily=[],__lastDailyCost=[],__chartHits=[],__chartHits2=[];
+var STYLES=['bars','line','area'];
 function fmt(n){if(!n)return'0';if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return''+n}
 function fmtCost(c){if(!c||c<0.001)return'$0.00';if(c<0.01)return'$'+c.toFixed(3);return'$'+c.toFixed(2)}
 function fmtDate(s){return new Date(s+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}
-function switchTab(tab){__tab=tab;document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));if(__data)renderTab(tab)}
+function switchTab(t){__tab=t;document.querySelectorAll('.tab').forEach(function(x){x.classList.toggle('active',x.dataset.tab===t)});if(__data)renderTab(t)}
 function renderTab(tab){
-  const s=__data[tab];if(!s)return;
+  var s=__data[tab];if(!s)return;
   document.getElementById('v-today').textContent=fmt(s.today_tok);
   document.getElementById('v-week').textContent=fmt(s.week_tok);
   document.getElementById('v-all').textContent=fmt(s.all_tok);
-  const sessEl=document.getElementById('stat-sess');
-  const hasCost=s.cost_today!=null&&s.cost_today>0;
-  if(hasCost){sessEl.style.display='';document.getElementById('lbl-sess').textContent=s.cost_exact?'Cost today':'~ Cost today';document.getElementById('v-sess').textContent=fmtCost(s.cost_today)}
-  else{sessEl.style.display='none'}
-  const costStr=s.cost_all!=null&&s.cost_all>0?' · '+(s.cost_exact?'':'~')+fmtCost(s.cost_all):'';
-  document.getElementById('s-all').textContent='All time: '+fmt(s.all_tok)+' tokens'+costStr;
-  document.getElementById('s-model').textContent=s.top_model&&s.top_model!=='—'?'Top model: '+s.top_model:'';
+  var se=document.getElementById('stat-sess');
+  if(s.cost_today&&s.cost_today>0){se.style.display='';document.getElementById('lbl-sess').textContent=s.cost_exact?'Cost today':'~ Cost today';document.getElementById('v-sess').textContent=fmtCost(s.cost_today)}
+  else{se.style.display='none'}
+  var cs=s.cost_all&&s.cost_all>0?' \u00B7 '+(s.cost_exact?'':'~')+fmtCost(s.cost_all):'';
+  document.getElementById('s-all').textContent='All time: '+fmt(s.all_tok)+' tokens'+cs;
+  document.getElementById('s-model').textContent=s.top_model&&s.top_model!=='\u2014'?'Top model: '+s.top_model:'';
   drawChart(s.daily||[]);drawCostChart(s.daily_cost||[]);
 }
-function filterByPeriod(daily){if(!daily||!daily.length)return daily;if(__chartPeriod==='1m'||__chartPeriod==='all')return daily;const n=__chartPeriod==='1d'?1:7;return daily.slice(-n)}
-function setChartPeriod(p){__chartPeriod=p;document.querySelectorAll('.cp').forEach(b=>b.classList.toggle('active',b.dataset.p===p));drawChart(__lastDaily);drawCostChart(__lastDailyCost)}
+function filterByPeriod(d){if(!d||!d.length)return d;if(__chartPeriod==='1m'||__chartPeriod==='all')return d;var n=__chartPeriod==='1d'?1:7;return d.slice(-n)}
+function setChartPeriod(p){__chartPeriod=p;document.querySelectorAll('.cp').forEach(function(b){b.classList.toggle('active',b.dataset.p===p)});drawChart(__lastDaily);drawCostChart(__lastDailyCost)}
 function cycleStyle(){__chartStyle=STYLES[(STYLES.indexOf(__chartStyle)+1)%STYLES.length];document.getElementById('style-btn').textContent=__chartStyle;drawChart(__lastDaily);drawCostChart(__lastDailyCost)}
 function drawBar(ctx,x,y,w,h,r){r=Math.min(r,h/2,w/2);ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h);ctx.lineTo(x,y+h);ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();ctx.fill()}
-function drawChartWith(cvId,daily,valFn,hitsRef,showYAxis){
-  hitsRef.length=0;
-  const cv=document.getElementById(cvId),ctx=cv.getContext('2d');
-  const dpr=window.devicePixelRatio||2,cw=cv.offsetWidth||300,ch=90;
+function drawChartWith(cvId,d,vf,hr,sy){
+  hr.length=0;
+  var cv=document.getElementById(cvId),ctx=cv.getContext('2d');
+  var dpr=window.devicePixelRatio||2,cw=cv.offsetWidth||300,ch=90;
   cv.style.height=ch+'px';cv.width=cw*dpr;cv.height=ch*dpr;ctx.scale(dpr,dpr);
-  ctx.clearRect(0,0,cw,ch);if(!daily||!daily.length)return;
-  const vals=daily.map(valFn),max=Math.max(...vals,1),n=daily.length,gap=2;
-  const leftPad=showYAxis?32:0,drawW=cw-leftPad;
-  const bw=(drawW-gap)/n-gap,bMaxH=ch-18,bl=ch-10;
-  if(showYAxis){
-    const isCost=cvId==='cv2';
-    const fmtAxis=isCost?function(v){if(v>=1)return'$'+v.toFixed(2);if(v>=0.01)return'$'+v.toFixed(3);return'$'+v.toFixed(4);}:function(v){return fmt(v);};
+  ctx.clearRect(0,0,cw,ch);if(!d||!d.length)return;
+  var vl=d.map(vf),mx=Math.max(...vl,1),n=d.length,gap=2;
+  var lp=sy?32:0,dw=cw-lp;
+  var bw=(dw-gap)/n-gap,bh=ch-18,bl=ch-10;
+  if(sy){
+    var ic=cvId==='cv2';
+    var fa=ic?function(v){if(v>=1)return'$'+v.toFixed(2);if(v>=0.01)return'$'+v.toFixed(3);return'$'+v.toFixed(4)}:fmt;
     ctx.font='9px -apple-system,sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';
-    [0.25,0.5,0.75,1].forEach(function(lvl){const ly=bl-lvl*bMaxH;ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(leftPad,ly);ctx.lineTo(cw,ly);ctx.stroke();ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillText(fmtAxis(lvl*max),leftPad-5,ly)});
+    [0.25,0.5,0.75,1].forEach(function(l){var ly=bl-l*bh;ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(lp,ly);ctx.lineTo(cw,ly);ctx.stroke();ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillText(fa(l*mx),lp-5,ly)});
   }
-  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.setLineDash([2,5]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(leftPad,bl+2);ctx.lineTo(cw,bl+2);ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.setLineDash([2,5]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(lp,bl+2);ctx.lineTo(cw,bl+2);ctx.stroke();ctx.setLineDash([]);
   if(__chartStyle==='bars'){
-    daily.forEach((d,i)=>{const r=vals[i]/max,bh=Math.max(2,r*bMaxH),x=i*(bw+gap)+gap+leftPad,y=bl-bh;ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';drawBar(ctx,x,y,bw,bh,2);hitsRef.push({x0:x,x1:x+bw,cx:x+bw/2,y:y,date:d.date,val:vals[i]})});
+    d.forEach(function(d,i){var r=vl[i]/mx,bh2=Math.max(2,r*bh),x=i*(bw+gap)+gap+lp,y=bl-bh2;ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';drawBar(ctx,x,y,bw,bh2,2);hr.push({x0:x,x1:x+bw,cx:x+bw/2,y:y,date:d.date,val:vl[i]})});
   } else {
-    const pts=daily.map((d,i)=>({x:i*(bw+gap)+gap+bw/2+leftPad,y:bl-Math.max(2,vals[i]/max*bMaxH),r:vals[i]/max,date:d.date,val:vals[i]}));
-    if(__chartStyle==='area'){const grad=ctx.createLinearGradient(0,0,0,bl);grad.addColorStop(0,'rgba(255,255,255,.28)');grad.addColorStop(1,'rgba(255,255,255,.02)');ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(pts[0].x,bl);pts.forEach(p=>ctx.lineTo(p.x,p.y));ctx.lineTo(pts[pts.length-1].x,bl);ctx.closePath();ctx.fill()}
-    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;ctx.beginPath();pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.stroke();
-    pts.forEach(p=>{hitsRef.push({x0:p.x-bw/2,x1:p.x+bw/2,cx:p.x,y:p.y,date:p.date,val:p.val});ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,'+(0.45+0.55*p.r).toFixed(2)+')';ctx.fill()});
+    var pts=d.map(function(d,i){return{x:i*(bw+gap)+gap+bw/2+lp,y:bl-Math.max(2,vl[i]/mx*bh),r:vl[i]/mx,date:d.date,val:vl[i]}});
+    if(__chartStyle==='area'){var grd=ctx.createLinearGradient(0,0,0,bl);grd.addColorStop(0,'rgba(255,255,255,.28)');grd.addColorStop(1,'rgba(255,255,255,.02)');ctx.fillStyle=grd;ctx.beginPath();ctx.moveTo(pts[0].x,bl);pts.forEach(function(p){ctx.lineTo(p.x,p.y)});ctx.lineTo(pts[pts.length-1].x,bl);ctx.closePath();ctx.fill()}
+    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;ctx.beginPath();pts.forEach(function(p,i){i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y)});ctx.stroke();
+    pts.forEach(function(p){hr.push({x0:p.x-bw/2,x1:p.x+bw/2,cx:p.x,y:p.y,date:p.date,val:p.val});ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,'+(0.45+0.55*p.r).toFixed(2)+')';ctx.fill()});
   }
 }
-function drawChart(daily){__lastDaily=daily||[];drawChartWith('cv',filterByPeriod(__lastDaily),d=>d.tokens,__chartHits,true)}
-function drawCostChart(daily){__lastDailyCost=daily||[];drawChartWith('cv2',filterByPeriod(__lastDailyCost),d=>d.cost,__chartHits2,true)}
+function drawChart(d){__lastDaily=d||[];drawChartWith('cv',filterByPeriod(__lastDaily),function(x){return x.tokens},__chartHits,true)}
+function drawCostChart(d){__lastDailyCost=d||[];drawChartWith('cv2',filterByPeriod(__lastDailyCost),function(x){return x.cost},__chartHits2,true)}
 (function(){
-  function makeTip(cvId,tipId,hitsRef,fmtFn){
-    const cv=document.getElementById(cvId);
-    cv.addEventListener('mousemove',function(e){if(!hitsRef.length)return;const mx=e.offsetX;let hit=null;for(const h of hitsRef){if(mx>=h.x0&&mx<=h.x1){hit=h;break}}const tip=document.getElementById(tipId);if(hit){tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);tip.style.display='block';const th=tip.offsetHeight||22;tip.style.left=(20+hit.cx)+'px';tip.style.top=Math.max(4,8+hit.y-th-4)+'px'}else{tip.style.display='none'}});
-    cv.addEventListener('mouseleave',function(){document.getElementById(tipId).style.display='none'});
+  function mkTip(cvId,ti,hits,fmtFn){
+    var cv=document.getElementById(cvId);
+    cv.addEventListener('mousemove',function(e){if(!hits.length)return;var mx=e.offsetX,hit=null;for(var h of hits){if(mx>=h.x0&&mx<=h.x1){hit=h;break}}var tip=document.getElementById(ti);if(hit){tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);tip.style.display='block';var th=tip.offsetHeight||22;tip.style.left=(20+hit.cx)+'px';tip.style.top=Math.max(4,8+hit.y-th-4)+'px'}else{tip.style.display='none'}});
+    cv.addEventListener('mouseleave',function(){document.getElementById(ti).style.display='none'});
   }
-  function fmtC(c){if(!c||c<0.001)return'$0.000';if(c<0.01)return'$'+c.toFixed(3);return'$'+c.toFixed(2)}
-  makeTip('cv','tip',__chartHits,fmt);
-  makeTip('cv2','tip2',__chartHits2,fmtC);
+  mkTip('cv','tip',__chartHits,fmt);
+  mkTip('cv2','tip2',__chartHits2,function(c){if(!c||c<0.001)return'$0.000';if(c<0.01)return'$'+c.toFixed(3);return'$'+c.toFixed(2)});
 })();
 function injectData(d){__data=d;renderTab(__tab)}
 <\/script>
-</body></html>`; }
+</body></html>`;
 
+// Inject the iframes
 function setupFrame(id, tab, seed) {
-  var data = makeFrameData(seed);
-  const f = document.getElementById(id);
-  f.srcdoc = appHTML(tab);
-  f.addEventListener('load', () => {
+  var data = makeData(seed);
+  var f = document.getElementById(id);
+  f.srcdoc = APP_HTML.replace(/__TAB__/g, "'" + tab + "'");
+  f.addEventListener('load', function() {
     try {
       f.contentWindow.injectData(data);
     } catch(e) {
-      setTimeout(() => { try { f.contentWindow.injectData(data); } catch(_){} }, 200);
+      setTimeout(function() { try { f.contentWindow.injectData(data); } catch(_){} }, 200);
     }
   });
 }
-setupFrame('app-frame-1', 'claude_code', 42);
-setupFrame('app-frame-2', 'all', 99);
-setupFrame('app-frame-3', 'codex', 7);
+// Generate 20 previews in the carousel
+var carousel = document.getElementById('carousel');
+var tabs = ['all', 'claude_code', 'codex', 'opencode'];
+for (var i = 0; i < 20; i++) {
+  var p = document.createElement('div');
+  p.className = 'preview';
+  p.style.setProperty('--i', i);
+  var w = document.createElement('div');
+  w.className = 'window-wrap';
+  var b = document.createElement('div');
+  b.className = 'window-body';
+  var f = document.createElement('iframe');
+  f.id = 'app-frame-' + i;
+  f.scrolling = 'no';
+  b.appendChild(f);
+  w.appendChild(b);
+  p.appendChild(w);
+  carousel.appendChild(p);
+  setupFrame('app-frame-' + i, tabs[i % tabs.length], i * 13 + 7);
+}
 </script>
 </body>
 </html>

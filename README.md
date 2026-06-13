@@ -17,6 +17,7 @@ Tokenbar reads local files written by Claude Code and Codex — no login, no API
 - Calculates exact costs using per-model pricing tables (Anthropic, OpenAI, DeepSeek, Xiaomi)
 - Displays 30-day token and cost charts with hover tooltips
 - Lets you exclude specific models from all calculations
+- Share your daily stats on X/Twitter with one click via the **Flex** button
 
 ## Requirements
 
@@ -48,6 +49,10 @@ pkill -f tokenbar.py && python3 tokenbar.py
 Click **◆** in the menu bar to open the popover.
 
 On first launch, `~/.tokenbar_start` is created automatically to track only usage from that point forward.
+
+### Flex on X/Twitter
+
+Click the **Flex** button in the popover footer to open a pre-filled tweet with your daily stats: today's tokens, all-time usage, top model, cost, and the sources you used. Your browser opens the tweet — just review and post.
 
 ## Data sources
 
