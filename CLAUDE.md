@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Main files
 
-- `tokenbar.py` — main application (macOS menu bar, ~1350 lines)
+- `tokenbar.py` — main application (macOS menu bar, ~1600 lines)
 - `keep_awake.sh` — standalone utility (prevents sleep via mouse movements)
 - `start_tokenbar.sh` — launches tokenbar in background via `nohup`, logs to `/tmp/tokenbar.log`
 - `index.html` — landing page, hosted via GitHub Pages at https://azerdsq131.github.io/tokenbar/
@@ -35,7 +35,7 @@ echo "$(date +%s)" > ~/.tokenbar_start
 
 ### macOS 16 WebKit — critical constraint
 
-macOS 16 WebKit blocks inline `<script>` tags when `baseURL` is `None`. All WebViews (popover and models window) must use `NSURL.fileURLWithPath_(str(Path.home()) + "/")` as base URL. The main JS is injected via `evaluateJavaScript_` after page load (not embedded in HTML), via `bootstrap_and_inject()` called from `webView_didFinishNavigation_`.
+macOS 16 WebKit blocks inline `<script>` tags when `baseURL` is `None`. All WebViews (popover, models window, settings window) must use `NSURL.fileURLWithPath_(str(Path.home()) + "/")` as base URL. The main JS is injected via `evaluateJavaScript_` after page load (not embedded in HTML), via `bootstrap_and_inject()` called from `webView_didFinishNavigation_`.
 
 ### Data sources
 
@@ -96,11 +96,11 @@ Separate `NSWindow` (400×540), opens on "All models →" click via `models` mes
 
 Data injected via `MODELS_HTML_TMPL.replace("MODELS_PLACEHOLDER", json.dumps(models))`.
 
-**Base URL fix**: both `loadHTMLString_baseURL_` calls use `NSURL.fileURLWithPath_(str(Path.home()) + "/")` — required for inline scripts to run on macOS 16.
+**Base URL fix**: all `loadHTMLString_baseURL_` calls use `NSURL.fileURLWithPath_(str(Path.home()) + "/")` — required for inline scripts to run on macOS 16.
 
 ### JS ↔ Python communication
 
-`WKWebView` exposes 6 message handlers: `resize`, `refresh`, `quit`, `models`, `saveSettings`, `flex`. Python injects data via `evaluateJavaScript_` calling `injectData(d)` on the JS side.
+Popover `WKWebView` exposes 7 message handlers: `resize`, `refresh`, `quit`, `models`, `saveSettings`, `flex`, `settings`. Settings window exposes 1: `saveSettings`. Python injects data via `evaluateJavaScript_` calling `injectData(d)` on the JS side.
 
 JS injection flow: `webView_didFinishNavigation_` → `bootstrap_and_inject()` → evaluates `MAIN_JS` → then evaluates `injectData(payload)`.
 
@@ -111,9 +111,13 @@ JS injection flow: `webView_didFinishNavigation_` → `bootstrap_and_inject()` �
 - Menu bar format: `◆ tokens / cost` (today's totals — e.g. `◆ 1.2k / $0.04`)
 - 30s cache on `fetch_claude_code` (`_cc_cache`) to avoid rescanning all JSONL files
 
-### Settings
+### Settings window
 
-Persisted to `~/.tokenbar_settings.json` via `_SETTINGS` global. Fields: `excluded_models`, `refresh_interval`, `chart_style`, `chart_period`, `accent_color`, `notify_enabled`, `notify_time`. Saved via `saveSettings` message handler, applied immediately via `applySettings()` in JS.
+Separate `NSWindow` (400×540), opens on gear icon click via `settings` message handler. Uses `SETTINGS_HTML_TMPL` with `SETTINGS_PLACEHOLDER` (same pattern as models window).
+
+Persisted to `~/.tokenbar_settings.json` via `_SETTINGS` global. Fields: `excluded_models`, `refresh_interval`, `chart_style`, `chart_period`, `accent_color`, `notify_enabled`, `notify_time`, `login_start`, `alerts`. Saved via `saveSettings` message handler (on settings window's own `userContentController`), applied immediately.
+
+Alerts: configured per type (tokens/cost) with a value threshold and optional repeat. Always active until removed (no period selector). Checked on every tick, fires an `NSUserNotification`.
 
 ### Flex on X/Twitter
 

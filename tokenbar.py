@@ -1551,8 +1551,17 @@ All time: {fmt(total)} tokens""" + (f"""
         self._models_win = win
         self._models_wv  = wv
 
-    @objc.python_method
     def show_settings_window(self):
+        try:
+            self._show_settings_window_impl()
+        except Exception as e:
+            import traceback
+            with open("/tmp/tokenbar_crash.log", "a") as f:
+                f.write(f"settings crash: {e}\n")
+                traceback.print_exc(file=f)
+
+    @objc.python_method
+    def _show_settings_window_impl(self):
         html     = SETTINGS_HTML_TMPL.replace("SETTINGS_PLACEHOLDER", json.dumps(_SETTINGS))
         dark     = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
 

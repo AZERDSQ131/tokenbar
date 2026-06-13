@@ -60,6 +60,10 @@ Enable a macOS notification every evening with your day's stats. The notificatio
 
 Configure it in **Settings → Daily notification**: toggle on/off, set the time (24h format). Defaults to 20:00.
 
+### Alerts
+
+Set per-model or per-cost thresholds in **Settings → Alerts**. When exceeded, you get a macOS notification. Alerts are permanent until removed (no expiry). Optionally enable **repeat** to be notified each time the threshold is crossed.
+
 ## Data sources
 
 | Source | File | Method |
