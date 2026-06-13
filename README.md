@@ -54,6 +54,12 @@ On first launch, `~/.tokenbar_start` is created automatically to track only usag
 
 Click the **Flex** button in the popover footer to open a pre-filled tweet with your daily stats: today's tokens, all-time usage, top model, cost, and the sources you used. Your browser opens the tweet — just review and post.
 
+### Daily notification
+
+Enable a macOS notification every evening with your day's stats. The notification includes a **Flex on X** button that opens the tweet directly.
+
+Configure it in **Settings → Daily notification**: toggle on/off, set the time (24h format). Defaults to 20:00.
+
 ## Data sources
 
 | Source | File | Method |
