@@ -47,7 +47,11 @@ def load_settings():
                   "chart_style": "bars", "chart_period": "1m",
                   "custom_rates": {},
                   "notify_enabled": False,
-                  "notify_time": "20:00"}
+                  "notify_time": "20:00",
+                  "login_start": False,
+                  "alert_enabled": False,
+                  "alert_threshold": 10.0,
+                  "alert_period": "daily"}
     try:
         if SETTINGS_FILE.exists():
             d = json.loads(SETTINGS_FILE.read_text())
@@ -60,6 +64,44 @@ def save_settings(d):
     try:
         SETTINGS_FILE.write_text(json.dumps(_SETTINGS, indent=2))
     except: pass
+
+LAUNCH_AGENT_DIR = Path.home() / "Library/LaunchAgents"
+LAUNCH_AGENT_PATH = LAUNCH_AGENT_DIR / "com.tokenbar.plist"
+SCRIPT_PATH = Path(__file__).resolve()
+
+def enable_login_start():
+    LAUNCH_AGENT_DIR.mkdir(parents=True, exist_ok=True)
+    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tokenbar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>{SCRIPT_PATH}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/tokenbar.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/tokenbar.log</string>
+</dict>
+</plist>"""
+    LAUNCH_AGENT_PATH.write_text(plist)
+    import subprocess
+    subprocess.run(["launchctl", "load", str(LAUNCH_AGENT_PATH)], capture_output=True)
+
+def disable_login_start():
+    if LAUNCH_AGENT_PATH.exists():
+        import subprocess
+        subprocess.run(["launchctl", "unload", str(LAUNCH_AGENT_PATH)], capture_output=True)
+        LAUNCH_AGENT_PATH.unlink()
 
 def get_refresh():
     return float(_SETTINGS.get("refresh_interval", DEFAULT_REFRESH))
@@ -733,6 +775,41 @@ canvas{display:block;width:100%}
 <hr class="settings-divider">
 
 <div class="settings-section">
+  <div class="settings-label">Launch at login</div>
+  <div class="settings-desc">Start Tokenbar automatically when you log in.</div>
+  <div class="settings-row" style="gap:10px">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="login-start" onchange="saveSettings()">
+      <span class="toggle-track"></span>
+    </label>
+    <span style="font-size:12px;color:rgba(255,255,255,.55)" id="login-start-label">Off</span>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Cost alert</div>
+  <div class="settings-desc">Get a notification when your cost exceeds a threshold.</div>
+  <div class="settings-row" style="gap:10px">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="alert-enabled" onchange="saveSettings()">
+      <span class="toggle-track"></span>
+    </label>
+    <span style="font-size:12px;color:rgba(255,255,255,.55);margin-right:14px" id="alert-enabled-label">Off</span>
+    <span style="font-size:11px;color:rgba(255,255,255,.45)">$</span>
+    <input class="settings-input narrow" id="alert-threshold" type="number" min="0.1" max="1000" step="0.5" value="10" onchange="saveSettings()">
+    <span style="font-size:11px;color:rgba(255,255,255,.45)">/</span>
+    <select class="settings-input narrow" id="alert-period" onchange="saveSettings()">
+      <option value="daily">day</option>
+      <option value="weekly">week</option>
+    </select>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
   <div class="settings-label">Time filter</div>
   <div class="settings-desc">Reset the start time to include all tokens.</div>
   <button class="sbtn danger" id="reset-btn" onclick="resetStart()">Reset</button>
@@ -959,6 +1036,16 @@ function applySettings(s){
     document.getElementById('notify-enabled-label').textContent=s.notify_enabled?'On':'Off'}
   var nt=document.getElementById('notify-hour');
   if(nt&&s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
+  var le=document.getElementById('login-start');
+  if(le&&s.login_start!==undefined){le.checked=s.login_start;
+    document.getElementById('login-start-label').textContent=s.login_start?'On':'Off'}
+  var ae=document.getElementById('alert-enabled');
+  if(ae&&s.alert_enabled!==undefined){ae.checked=s.alert_enabled;
+    document.getElementById('alert-enabled-label').textContent=s.alert_enabled?'On':'Off'}
+  var at=document.getElementById('alert-threshold');
+  if(at&&s.alert_threshold){at.value=s.alert_threshold}
+  var ap=document.getElementById('alert-period');
+  if(ap&&s.alert_period){ap.value=s.alert_period}
 }
 
 function showMain(){
@@ -999,7 +1086,11 @@ function collectSettings(){
     chart_period:document.getElementById('chart-period').value,
     accent_color:__settings.accent_color||'#1c1c1e',
     notify_enabled:document.getElementById('notify-enabled').checked,
-    notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0'))
+    notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),
+    login_start:document.getElementById('login-start').checked,
+    alert_enabled:document.getElementById('alert-enabled').checked,
+    alert_threshold:parseFloat(document.getElementById('alert-threshold').value)||10,
+    alert_period:document.getElementById('alert-period').value
   }
 }
 
@@ -1221,6 +1312,7 @@ class AppDelegate(NSObject):
         self._models_win = None
         self._timer = None
         self._notified_date = None
+        self._alerted_threshold = {}
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
@@ -1289,7 +1381,46 @@ class AppDelegate(NSObject):
             self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
         if self._pop.isShown():
             self._inject_js(data)
+        if not hasattr(self, '_login_start_synced'):
+            self._ensure_login_start()
         self.check_daily_notification()
+        self._check_cost_alert(data)
+
+    @objc.python_method
+    def _ensure_login_start(self):
+        enabled = _SETTINGS.get("login_start", False)
+        exists = LAUNCH_AGENT_PATH.exists()
+        if enabled and not exists:
+            enable_login_start()
+        elif not enabled and exists:
+            disable_login_start()
+
+    @objc.python_method
+    def _check_cost_alert(self, data):
+        if not data or not _SETTINGS.get("alert_enabled", False):
+            return
+        threshold = float(_SETTINGS.get("alert_threshold", 10.0))
+        period = _SETTINGS.get("alert_period", "daily")
+        s = data["all"]
+        if period == "daily":
+            cost = s["cost_today"]
+            key = "d_" + datetime.now().strftime("%Y-%m-%d")
+        else:
+            cost = s.get("week_tok", 0) * 0.000005  # rough weekly estimate
+            key = "w_" + datetime.now().strftime("%Y-W%V")
+        if cost is None or cost < threshold:
+            return
+        if self._alerted_threshold.get(key) == threshold:
+            return
+        self._alerted_threshold[key] = threshold
+        cost_s = f"${cost:.2f}" if cost >= 0.01 else f"${cost:.3f}"
+        period_label = "today" if period == "daily" else "this week"
+        notification = NSUserNotification.alloc().init()
+        notification.setTitle_("Tokenbar — Cost Alert")
+        notification.setInformativeText_(f"You've spent {cost_s} {period_label} (limit: ${threshold:.2f})")
+        notification.setActionButtonTitle_("Flex on X")
+        notification.setUserInfo_({"action": "flex"})
+        NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
 
     @objc.python_method
     def check_daily_notification(self):
@@ -1387,6 +1518,8 @@ class AppDelegate(NSObject):
                 START_S = float(stamp)
                 _cc_cache["ts"] = 0.0
             save_settings(d)
+            if "login_start" in d:
+                self._ensure_login_start()
             self._start_timer()
             self.inject_data()
         except: pass
