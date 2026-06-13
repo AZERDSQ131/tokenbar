@@ -64,9 +64,6 @@ All sources are filtered from `~/.tokenbar_start` (Unix timestamp).
 Claude costs are computed exactly using `(input, output, cache_write, cache_read)` token counts and `CLAUDE_PRICING` tables per model family.
 
 Other models use `BLENDED_RATES` ($/M blended). Fallback: $5/M.
-
-Models in `EXCLUDED_MODELS` (`qwen122b`, `qwen3.5` by default) are filtered from all calculations.
-
 ## License
 
 MIT
