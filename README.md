@@ -1,8 +1,8 @@
-# TokenBar
+# Tokenbar
 
 **Live AI token usage and cost tracking in your macOS menu bar.**
 
-TokenBar reads local files written by Claude Code and Codex — no login, no API keys, no internet access required.
+Tokenbar reads local files written by Claude Code and Codex — no login, no API keys, no internet access required.
 
 ![macOS only](https://img.shields.io/badge/macOS-only-black?logo=apple)
 ![Python 3](https://img.shields.io/badge/Python-3-blue)
