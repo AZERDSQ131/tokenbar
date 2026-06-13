@@ -1287,7 +1287,9 @@ class AppDelegate(NSObject):
     def tick_(self, _):
         data = fetch()
         if data:
-            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])}")
+            cost = data['all']['cost_today']
+            cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
+            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
         if self._pop.isShown():
             self._inject_js(data)
         self.check_daily_notification()
@@ -1366,7 +1368,9 @@ class AppDelegate(NSObject):
         """Injecte MAIN_JS dans le monde page, puis les données."""
         data = fetch()
         if data:
-            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])}")
+            cost = data['all']['cost_today']
+            cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
+            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
         def on_bootstrap(result, error):
             if not error and data:
                 self._inject_js(data)
@@ -1377,7 +1381,9 @@ class AppDelegate(NSObject):
         data = fetch()
         if not data:
             self._item.button().setTitle_("◆ ⚠"); return
-        self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])}")
+        cost = data['all']['cost_today']
+        cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
+        self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
         self._inject_js(data)
 
     @objc.python_method
