@@ -987,7 +987,7 @@ SETTINGS_HTML_TMPL = """\
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:400px;height:540px;background:#1c1c1e;color:#fff;
+html,body{width:100%;height:100vh;background:#1c1c1e;color:#fff;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
   overflow:hidden;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
 .settings-header{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}
