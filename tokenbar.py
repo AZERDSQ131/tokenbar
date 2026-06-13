@@ -49,9 +49,7 @@ def load_settings():
                   "notify_enabled": False,
                   "notify_time": "20:00",
                   "login_start": False,
-                  "alert_enabled": False,
-                  "alert_threshold": 10.0,
-                  "alert_period": "daily"}
+                  "alerts": []}
     try:
         if SETTINGS_FILE.exists():
             d = json.loads(SETTINGS_FILE.read_text())
@@ -789,21 +787,24 @@ canvas{display:block;width:100%}
 <hr class="settings-divider">
 
 <div class="settings-section">
-  <div class="settings-label">Cost alert</div>
-  <div class="settings-desc">Get a notification when your cost exceeds a threshold.</div>
-  <div class="settings-row" style="gap:10px">
-    <label class="toggle-wrap">
-      <input type="checkbox" id="alert-enabled" onchange="saveSettings()">
-      <span class="toggle-track"></span>
-    </label>
-    <span style="font-size:12px;color:rgba(255,255,255,.55);margin-right:14px" id="alert-enabled-label">Off</span>
-    <span style="font-size:11px;color:rgba(255,255,255,.45)">$</span>
-    <input class="settings-input narrow" id="alert-threshold" type="number" min="0.1" max="1000" step="0.5" value="10" onchange="saveSettings()">
-    <span style="font-size:11px;color:rgba(255,255,255,.45)">/</span>
-    <select class="settings-input narrow" id="alert-period" onchange="saveSettings()">
-      <option value="daily">day</option>
-      <option value="weekly">week</option>
+  <div class="settings-label">Alerts</div>
+  <div class="settings-desc">Get notified on thresholds. Supports tokens or cost, daily or all time.</div>
+  <div class="tags-wrap" id="alert-list"></div>
+  <div class="settings-row" style="gap:6px;flex-wrap:wrap">
+    <select class="settings-input narrow" id="alert-type" style="width:56px">
+      <option value="tokens">🔤</option>
+      <option value="cost">💰</option>
     </select>
+    <input class="settings-input narrow" id="alert-value" type="number" min="0.1" step="1" value="10000" placeholder="value" style="width:72px">
+    <select class="settings-input narrow" id="alert-period" style="width:72px">
+      <option value="today">today</option>
+      <option value="all">all</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,.45);cursor:pointer">
+      <input type="checkbox" id="alert-step" style="accent-color:#7c6af7">
+      step
+    </label>
+    <button class="sbtn" onclick="addAlert()">Add</button>
   </div>
 </div>
 
@@ -1046,6 +1047,7 @@ function applySettings(s){
   if(at&&s.alert_threshold){at.value=s.alert_threshold}
   var ap=document.getElementById('alert-period');
   if(ap&&s.alert_period){ap.value=s.alert_period}
+  if(s.alerts){renderAlerts(s.alerts)}
 }
 
 function showMain(){
@@ -1079,6 +1081,10 @@ function collectSettings(){
   document.querySelectorAll('#excl-list .tag').forEach(function(t){
     var v=t.getAttribute('data-val');if(v)excl.push(v)
   });
+  var alerts=[];
+  document.querySelectorAll('#alert-list .tag').forEach(function(t){
+    try{alerts.push(JSON.parse(t.getAttribute('data-val')))}catch(e){}
+  });
   return{
     excluded_models:excl,
     refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,
@@ -1088,9 +1094,7 @@ function collectSettings(){
     notify_enabled:document.getElementById('notify-enabled').checked,
     notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),
     login_start:document.getElementById('login-start').checked,
-    alert_enabled:document.getElementById('alert-enabled').checked,
-    alert_threshold:parseFloat(document.getElementById('alert-threshold').value)||10,
-    alert_period:document.getElementById('alert-period').value
+    alerts:alerts
   }
 }
 
@@ -1115,6 +1119,48 @@ function addExcl(){
 
 function delExcl(btn){
   btn.parentElement.remove();
+  saveSettings();
+}
+
+function renderAlerts(alerts){
+  var el=document.getElementById('alert-list');if(!el)return;
+  el.innerHTML='';
+  (alerts||[]).forEach(function(a,i){
+    var icons={'tokens':'🔤','cost':'💰'};
+    var steps={'tokens':'tokens','cost':'$'};
+    var val=a.step?(a.type==='cost'?'$'+a.value:fmtNum(a.value)):(a.type==='cost'?'$'+a.value:fmtNum(a.value));
+    var label=icons[a.type]+' '+val+(a.period==='all'?' · all':'')+(a.step?' · step':'');
+    var sp=document.createElement('span');
+    sp.className='tag';sp.setAttribute('data-val',JSON.stringify(a));
+    sp.innerHTML=label+'<button class="tag-del" onclick="delAlert(this)" title="Remove">&#x2715;</button>';
+    el.appendChild(sp);
+  });
+}
+function fmtNum(n){
+  if(!n)return'0';if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return''+n;
+}
+
+function addAlert(){
+  var type=document.getElementById('alert-type').value;
+  var val=parseFloat(document.getElementById('alert-value').value);
+  if(!val||val<=0)return;
+  var period=document.getElementById('alert-period').value;
+  var step=document.getElementById('alert-step').checked;
+  document.getElementById('alert-value').value='';
+  document.getElementById('alert-step').checked=false;
+  var existing=__settings.alerts||[];
+  existing.push({type:type,value:val,period:period,step:step});
+  __settings.alerts=existing;
+  renderAlerts(existing);
+  saveSettings();
+}
+function delAlert(btn){
+  var tag=btn.parentElement;
+  var idx=Array.from(tag.parentElement.children).indexOf(tag);
+  var alerts=__settings.alerts||[];
+  alerts.splice(idx,1);
+  __settings.alerts=alerts;
+  renderAlerts(alerts);
   saveSettings();
 }
 
@@ -1147,6 +1193,7 @@ function renderSettings(s){
   document.querySelectorAll('.swatch').forEach(function(b){
     b.classList.toggle('active',b.getAttribute('data-color')===color);
   });
+  renderAlerts(s.alerts);
 }
 
 (function(){
@@ -1384,7 +1431,7 @@ class AppDelegate(NSObject):
         if not hasattr(self, '_login_start_synced'):
             self._ensure_login_start()
         self.check_daily_notification()
-        self._check_cost_alert(data)
+        self._check_alerts(data)
 
     @objc.python_method
     def _ensure_login_start(self):
@@ -1396,31 +1443,52 @@ class AppDelegate(NSObject):
             disable_login_start()
 
     @objc.python_method
-    def _check_cost_alert(self, data):
-        if not data or not _SETTINGS.get("alert_enabled", False):
+    def _check_alerts(self, data):
+        if not data:
             return
-        threshold = float(_SETTINGS.get("alert_threshold", 10.0))
-        period = _SETTINGS.get("alert_period", "daily")
+        alerts = _SETTINGS.get("alerts", [])
+        if not alerts:
+            return
         s = data["all"]
-        if period == "daily":
-            cost = s["cost_today"]
-            key = "d_" + datetime.now().strftime("%Y-%m-%d")
-        else:
-            cost = s.get("week_tok", 0) * 0.000005  # rough weekly estimate
-            key = "w_" + datetime.now().strftime("%Y-W%V")
-        if cost is None or cost < threshold:
-            return
-        if self._alerted_threshold.get(key) == threshold:
-            return
-        self._alerted_threshold[key] = threshold
-        cost_s = f"${cost:.2f}" if cost >= 0.01 else f"${cost:.3f}"
-        period_label = "today" if period == "daily" else "this week"
-        notification = NSUserNotification.alloc().init()
-        notification.setTitle_("Tokenbar — Cost Alert")
-        notification.setInformativeText_(f"You've spent {cost_s} {period_label} (limit: ${threshold:.2f})")
-        notification.setActionButtonTitle_("Flex on X")
-        notification.setUserInfo_({"action": "flex"})
-        NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        for a in alerts:
+            try:
+                typ = a.get("type", "cost")
+                val = float(a.get("value", 10))
+                period = a.get("period", "today")
+                step = a.get("step", False)
+                is_cost = typ == "cost"
+                if is_cost:
+                    current = s["cost_today"] if period == "today" else s["cost_all"]
+                else:
+                    current = s["today_tok"] if period == "today" else s["all_tok"]
+                if current is None or current < val:
+                    continue
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                aid = f"{typ}_{period}_{val}_{step}"
+                if period == "today":
+                    aid += f"_{today_str}"
+                if step:
+                    n = int(current // val)
+                    last = self._alerted_threshold.get(aid, 0)
+                    if n <= last:
+                        continue
+                    self._alerted_threshold[aid] = n
+                else:
+                    if self._alerted_threshold.get(aid):
+                        continue
+                    self._alerted_threshold[aid] = True
+                label = "Cost" if is_cost else "Tokens"
+                unit = f"${current:.2f}" if is_cost else fmt(int(current))
+                limit = f"${val:.2f}" if is_cost else fmt(int(val))
+                notif = NSUserNotification.alloc().init()
+                notif.setTitle_("Tokenbar — Alert")
+                notif.setInformativeText_(f"{label}: {unit} ({limit} threshold)")
+                notif.setActionButtonTitle_("Flex on X")
+                notif.setUserInfo_({"action": "flex"})
+                NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notif)
+            except:
+                pass
 
     @objc.python_method
     def check_daily_notification(self):
