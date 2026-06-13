@@ -1333,6 +1333,9 @@ class AppDelegate(NSObject):
         notification.setInformativeText_(text)
         notification.setActionButtonTitle_("Flex on X")
         notification.setUserInfo_({"action": "flex"})
+        icon_path = Path(__file__).parent / "tokenbar_icon.png"
+        if icon_path.exists():
+            notification.setContentImage_(NSImage.alloc().initWithContentsOfFile_(str(icon_path)))
         NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
 
     def userNotificationCenter_didActivateNotification_(self, center, notification):

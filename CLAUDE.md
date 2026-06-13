@@ -15,11 +15,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run in foreground
 python3 tokenbar.py
 
-# Run in background
+# Run in background (uses Tokenbar.app if available)
 ./start_tokenbar.sh
 
 # Full restart
 pkill -f tokenbar.py && python3 tokenbar.py
+
+# Build .app bundle (required for notification icon)
+./start_tokenbar.sh  # auto-creates on first run, or:
+open Tokenbar.app
 
 # Python dependencies (PyObjC + WebKit bindings)
 pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit

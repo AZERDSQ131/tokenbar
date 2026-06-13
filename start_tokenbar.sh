@@ -9,6 +9,13 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     exit 0
 fi
 
-nohup python3 "$SCRIPT_DIR/tokenbar.py" > /tmp/tokenbar.log 2>&1 &
-echo $! > "$PID_FILE"
-echo "tokenbar démarré (PID $!)"
+APP_BUNDLE="$SCRIPT_DIR/Tokenbar.app"
+if [[ -d "$APP_BUNDLE" ]]; then
+    nohup "$APP_BUNDLE/Contents/MacOS/tokenbar" > /tmp/tokenbar.log 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "tokenbar démarré via Tokenbar.app (PID $!)"
+else
+    nohup python3 "$SCRIPT_DIR/tokenbar.py" > /tmp/tokenbar.log 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "tokenbar démarré (PID $!)"
+fi
