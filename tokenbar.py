@@ -17,7 +17,6 @@ from AppKit import (
     NSView, NSMakeRect, NSSize, NSAppearance, NSVisualEffectView, NSColor,
     NSWindow, NSBackingStoreBuffered,
     NSUserNotificationCenter, NSUserNotification,
-    NSBezierPath, NSGraphicsContext, NSImage,
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL
@@ -1225,8 +1224,6 @@ class AppDelegate(NSObject):
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
-        NSApp.setApplicationIconImage_(self._make_app_icon())
-
         self._bar  = NSStatusBar.systemStatusBar()
         self._item = self._bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self._item.button()
@@ -1333,9 +1330,6 @@ class AppDelegate(NSObject):
         notification.setInformativeText_(text)
         notification.setActionButtonTitle_("Flex on X")
         notification.setUserInfo_({"action": "flex"})
-        icon_path = Path(__file__).parent / "tokenbar_icon.png"
-        if icon_path.exists():
-            notification.setContentImage_(NSImage.alloc().initWithContentsOfFile_(str(icon_path)))
         NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
 
     def userNotificationCenter_didActivateNotification_(self, center, notification):
@@ -1350,21 +1344,6 @@ class AppDelegate(NSObject):
         self._pop.setContentSize_(NSSize(W, h))
         self._wv.setFrame_(NSMakeRect(0, 0, W, h))
 
-    @objc.python_method
-    def _make_app_icon(self):
-        s = 64
-        img = NSImage.alloc().initWithSize_((s, s))
-        img.lockFocus()
-        path = NSBezierPath.bezierPath()
-        path.moveToPoint_((s/2, 2))
-        path.lineToPoint_((s-2, s/2))
-        path.lineToPoint_((s/2, s-2))
-        path.lineToPoint_((2, s/2))
-        path.closePath()
-        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.48, 0.42, 0.97, 1.0).set()
-        path.fill()
-        img.unlockFocus()
-        return img
 
     @objc.python_method
     def bootstrap_and_inject(self):
