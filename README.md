@@ -12,7 +12,7 @@ Tokenbar reads local files written by Claude Code and Codex — no login, no API
 
 ## What it does
 
-- Shows total token count in your menu bar, updated every 15 seconds
+- Shows today's tokens and cost in your menu bar (◆ 1.2k / $0.04), updated every 15 seconds
 - Breaks down usage by source (Claude Code, Codex, OpenCode), by model, and by day
 - Calculates exact costs using per-model pricing tables (Anthropic, OpenAI, DeepSeek, Xiaomi)
 - Displays 30-day token and cost charts with hover tooltips
@@ -46,7 +46,7 @@ python3 tokenbar.py
 pkill -f tokenbar.py && python3 tokenbar.py
 ```
 
-Click **◆** in the menu bar to open the popover.
+Click **◆ tokens / cost** in the menu bar to open the popover.
 
 On first launch, `~/.tokenbar_start` is created automatically to track only usage from that point forward.
 

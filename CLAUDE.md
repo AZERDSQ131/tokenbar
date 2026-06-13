@@ -108,6 +108,7 @@ JS injection flow: `webView_didFinishNavigation_` → `bootstrap_and_inject()` �
 
 - `NSTimer` every 15 seconds (`REFRESH = 15.0`)
 - Menu bar updates on every tick; popover only if open
+- Menu bar format: `◆ tokens / cost` (today's totals — e.g. `◆ 1.2k / $0.04`)
 - 30s cache on `fetch_claude_code` (`_cc_cache`) to avoid rescanning all JSONL files
 
 ### Settings
