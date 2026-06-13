@@ -16,6 +16,8 @@ from AppKit import (
     NSStatusBar, NSVariableStatusItemLength, NSViewController,
     NSView, NSMakeRect, NSSize, NSAppearance, NSVisualEffectView, NSColor,
     NSWindow, NSBackingStoreBuffered,
+    NSUserNotificationCenter, NSUserNotification,
+    NSBezierPath, NSGraphicsContext, NSImage,
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL
@@ -44,7 +46,9 @@ def load_settings():
     _SETTINGS = {"excluded_models": list(DEFAULT_EXCLUDED),
                   "refresh_interval": DEFAULT_REFRESH,
                   "chart_style": "bars", "chart_period": "1m",
-                  "custom_rates": {}}
+                  "custom_rates": {},
+                  "notify_enabled": False,
+                  "notify_time": "20:00"}
     try:
         if SETTINGS_FILE.exists():
             d = json.loads(SETTINGS_FILE.read_text())
@@ -529,7 +533,20 @@ html,body{width:340px;background:#1c1c1e;color:#fff;
   border-radius:6px;padding:5px 8px;color:#fff;font-size:12px;outline:none;font-family:inherit;width:100%}
 .settings-input:focus{border-color:rgba(255,255,255,.28)}
 .settings-input.narrow{width:72px}
+.time-input{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
+  border-radius:6px;padding:5px 4px;color:#fff;font-size:13px;outline:none;font-family:inherit;
+  width:40px;text-align:center}
+.time-input:focus{border-color:rgba(255,255,255,.28)}
+.time-input::-webkit-inner-spin-button,.time-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 .settings-hint{font-size:10px;color:rgba(255,255,255,.2);margin-top:4px}
+.toggle-wrap{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}
+.toggle-wrap input{opacity:0;width:0;height:0}
+.toggle-track{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
+  background:rgba(255,255,255,.15);border-radius:10px;transition:background .2s}
+.toggle-track::before{content:'';position:absolute;width:16px;height:16px;
+  left:2px;bottom:2px;background:#fff;border-radius:50%;transition:transform .2s}
+.toggle-wrap input:checked+.toggle-track{background:#5b9cf6}
+.toggle-wrap input:checked+.toggle-track::before{transform:translateX(16px)}
 .settings-divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:10px 0}
 .tag{display:inline-flex;align-items:center;gap:3px;background:rgba(255,255,255,.08);
   border-radius:4px;padding:2px 7px;font-size:11px;color:rgba(255,255,255,.55);margin:2px 4px 2px 0}
@@ -693,6 +710,24 @@ canvas{display:block;width:100%}
       <option value="1m">1 month</option>
       <option value="all">All</option>
     </select>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
+  <div class="settings-label">Daily notification</div>
+  <div class="settings-desc">Get a daily summary at a set time with a Flex button.</div>
+  <div class="settings-row" style="gap:10px;flex-wrap:wrap">
+    <label class="toggle-wrap">
+      <input type="checkbox" id="notify-enabled" onchange="saveSettings()">
+      <span class="toggle-track"></span>
+    </label>
+    <span style="font-size:12px;color:rgba(255,255,255,.55);margin-right:14px" id="notify-enabled-label">Off</span>
+    <span style="font-size:11px;color:rgba(255,255,255,.45)">Time</span>
+    <input class="time-input" id="notify-hour" type="number" min="0" max="23" value="20" onchange="saveSettings()">
+    <span style="color:rgba(255,255,255,.35);font-size:14px">:</span>
+    <input class="time-input" id="notify-min" type="number" min="0" max="59" value="0" onchange="saveSettings()">
   </div>
 </div>
 
@@ -920,6 +955,11 @@ function applySettings(s){
       b.classList.toggle('active',b.getAttribute('data-color')===s.accent_color);
     });
   }
+  var ne=document.getElementById('notify-enabled');
+  if(ne&&s.notify_enabled!==undefined){ne.checked=s.notify_enabled;
+    document.getElementById('notify-enabled-label').textContent=s.notify_enabled?'On':'Off'}
+  var nt=document.getElementById('notify-hour');
+  if(nt&&s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
 }
 
 function showMain(){
@@ -958,7 +998,9 @@ function collectSettings(){
     refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,
     chart_style:document.getElementById('chart-style').value,
     chart_period:document.getElementById('chart-period').value,
-    accent_color:__settings.accent_color||'#1c1c1e'
+    accent_color:__settings.accent_color||'#1c1c1e',
+    notify_enabled:document.getElementById('notify-enabled').checked,
+    notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0'))
   }
 }
 
@@ -1179,6 +1221,11 @@ class AppDelegate(NSObject):
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         self._models_win = None
         self._timer = None
+        self._notified_date = None
+
+        NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
+
+        NSApp.setApplicationIconImage_(self._make_app_icon())
 
         self._bar  = NSStatusBar.systemStatusBar()
         self._item = self._bar.statusItemWithLength_(NSVariableStatusItemLength)
@@ -1243,11 +1290,76 @@ class AppDelegate(NSObject):
             self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])}")
         if self._pop.isShown():
             self._inject_js(data)
+        self.check_daily_notification()
+
+    @objc.python_method
+    def check_daily_notification(self):
+        if not _SETTINGS.get("notify_enabled", False):
+            return
+        notify_time = _SETTINGS.get("notify_time", "20:00")
+        try:
+            hour, minute = map(int, notify_time.split(":"))
+        except:
+            return
+        now = datetime.now()
+        if now.hour != hour or now.minute != minute:
+            return
+        today_key = now.strftime("%Y-%m-%d")
+        if self._notified_date == today_key:
+            return
+        self._notified_date = today_key
+        data = fetch()
+        if not data:
+            return
+        s = data["all"]
+        today = s["today_tok"]
+        total = s["all_tok"]
+        cost  = s["cost_today"]
+        model_today = s.get("top_model_today") or ""
+        def f(n):
+            if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+            if n >= 1_000:    return f"{n/1_000:.1f}k"
+            return str(n)
+        cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
+        text = f"Today: {f(today)} · All time: {f(total)}"
+        if model_today:
+            text += f" · Top: {model_today}"
+        if cost and cost > 0:
+            text += f" · Cost: {cost_s}"
+        notification = NSUserNotification.alloc().init()
+        notification.setTitle_("Tokenbar — Daily Summary")
+        notification.setInformativeText_(text)
+        notification.setActionButtonTitle_("Flex on X")
+        notification.setUserInfo_({"action": "flex"})
+        NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
+
+    def userNotificationCenter_didActivateNotification_(self, center, notification):
+        if notification.userInfo() and notification.userInfo().get("action") == "flex":
+            self.flex()
+
+    def userNotificationCenter_shouldPresentNotification_(self, center, notification):
+        return True
 
     @objc.python_method
     def resize_popover(self, h):
         self._pop.setContentSize_(NSSize(W, h))
         self._wv.setFrame_(NSMakeRect(0, 0, W, h))
+
+    @objc.python_method
+    def _make_app_icon(self):
+        s = 64
+        img = NSImage.alloc().initWithSize_((s, s))
+        img.lockFocus()
+        path = NSBezierPath.bezierPath()
+        path.moveToPoint_((s/2, 2))
+        path.lineToPoint_((s-2, s/2))
+        path.lineToPoint_((s/2, s-2))
+        path.lineToPoint_((2, s/2))
+        path.closePath()
+        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.48, 0.42, 0.97, 1.0).set()
+        path.fill()
+        img.unlockFocus()
+        return img
 
     @objc.python_method
     def bootstrap_and_inject(self):
