@@ -1290,7 +1290,7 @@ class AppDelegate(NSObject):
 
         if self._models_win is not None:
             try:
-                self._models_wv.loadHTMLString_baseURL_(html, None)
+                self._models_wv.loadHTMLString_baseURL_(html, NSURL.fileURLWithPath_(str(Path.home()) + "/"))
                 self._models_win.makeKeyAndOrderFront_(None)
                 NSApp.activateIgnoringOtherApps_(True)
                 return
@@ -1309,7 +1309,7 @@ class AppDelegate(NSObject):
         wv.setOpaque_(False)
         wv.setBackgroundColor_(NSColor.clearColor())
         wv.setAutoresizingMask_(18)
-        wv.loadHTMLString_baseURL_(html, None)
+        wv.loadHTMLString_baseURL_(html, NSURL.fileURLWithPath_(str(Path.home()) + "/"))
 
         win.contentView().addSubview_(wv)
         win.makeKeyAndOrderFront_(None)
