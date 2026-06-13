@@ -487,8 +487,22 @@
 <script>
 // ── Build the iframe srcdoc with the real app code + fake data ──────────────
 
-// 30 days of fake daily token data (realistic variation)
-function makeDailyTokens() {
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+var _seed = 1;
+function seededRand() {
+  _seed = (_seed * 9301 + 49297) % 233280;
+  return _seed / 233280;
+}
+function seededInt(min, max, seed) {
+  _seed = seed || 1;
+  _seed = (_seed * 9301 + 49297) % 233280;
+  return Math.floor((_seed / 233280) * (max - min + 1)) + min;
+}
+
+function makeDailyTokens(variation) {
   const base = [
     88000,140000,210000,95000,175000,260000,72000,
     155000,230000,128000,185000,310000,98000,172000,
@@ -499,75 +513,69 @@ function makeDailyTokens() {
   const start = new Date(); start.setDate(start.getDate() - 29);
   return base.map((tok, i) => {
     const d = new Date(start); d.setDate(d.getDate() + i);
-    return { date: d.toISOString().slice(0,10), tokens: tok };
+    return { date: d.toISOString().slice(0,10), tokens: Math.round(tok * variation) };
   });
 }
 
-function makeDailyCost(daily) {
-  return daily.map(d => ({ date: d.date, cost: d.tokens * 0.0000074 }));
+function makeDailyCost(daily, rate) {
+  return daily.map(d => ({ date: d.date, cost: d.tokens * rate }));
 }
 
-const daily     = makeDailyTokens();
-const dailyCost = makeDailyCost(daily);
-const total     = daily.reduce((s,d) => s + d.tokens, 0);
-const todayTok  = daily[daily.length-1].tokens;
-const weekTok   = daily.slice(-7).reduce((s,d) => s+d.tokens, 0);
-const costAll   = total     * 0.0000074;
-const costToday = todayTok  * 0.0000074;
+function makeFrameData(seed) {
+  var v = seededInt(5, 15, seed) / 10;
+  var v2 = seededInt(4, 18, seed + 100) / 10;
+  var v3 = seededInt(3, 20, seed + 200) / 10;
+  var allDaily = makeDailyTokens(v);
+  var allCost = makeDailyCost(allDaily, 0.0000074);
+  var claudeDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * v2 / 10 * 9) }; });
+  var claudeCost = makeDailyCost(claudeDaily, 0.0000082);
+  var codexDaily = allDaily.map(function(d) { return { date: d.date, tokens: Math.round(d.tokens * v3 / 10) }; });
+  var codexCost = makeDailyCost(codexDaily, 0.000003);
 
-// Claude Code: 90% of traffic
-const ccDaily     = daily.map(d => ({ date: d.date, tokens: Math.round(d.tokens * .9) }));
-const ccDailyCost = ccDaily.map(d => ({ date: d.date, cost: d.tokens * 0.0000082 }));
-const ccTotal     = ccDaily.reduce((s,d)=>s+d.tokens,0);
-const ccToday     = ccDaily[ccDaily.length-1].tokens;
-const ccWeek      = ccDaily.slice(-7).reduce((s,d)=>s+d.tokens,0);
+  function sum(arr) { return arr.reduce(function(s, d) { return s + d.tokens; }, 0); }
+  function sumCost(arr) { return arr.reduce(function(s, d) { return s + d.cost; }, 0); }
 
-// Codex: 10%
-const cxDaily = daily.map(d => ({ date: d.date, tokens: Math.round(d.tokens * .1) }));
-const cxTotal = cxDaily.reduce((s,d)=>s+d.tokens,0);
-const cxToday = cxDaily[cxDaily.length-1].tokens;
-const cxWeek  = cxDaily.slice(-7).reduce((s,d)=>s+d.tokens,0);
-
-const fakeData = {
-  all: {
-    today_tok:  todayTok,
-    week_tok:   weekTok,
-    all_tok:    total,
-    cost_today: costToday,
-    cost_all:   costAll,
-    cost_exact: false,
-    top_model:  'claude-sonnet-4-6',
-    daily:      daily,
-    daily_cost: dailyCost
-  },
-  claude_code: {
-    today_tok:  ccToday,
-    week_tok:   ccWeek,
-    all_tok:    ccTotal,
-    cost_today: ccToday * 0.0000082,
-    cost_all:   ccTotal * 0.0000082,
-    cost_exact: true,
-    top_model:  'claude-sonnet-4-6',
-    daily:      ccDaily,
-    daily_cost: ccDailyCost
-  },
-  codex: {
-    today_tok:  cxToday,
-    week_tok:   cxWeek,
-    all_tok:    cxTotal,
-    cost_today: 0,
-    cost_all:   cxTotal * 0.000003,
-    cost_exact: false,
-    top_model:  'o4-mini',
-    daily:      cxDaily,
-    daily_cost: cxDaily.map(d => ({ date: d.date, cost: d.tokens * 0.000003 }))
-  },
-  opencode: {
-    today_tok:  0, week_tok: 0, all_tok: 0,
-    cost_today: 0, cost_all: 0, cost_exact: false,
-    top_model: '—', daily: [], daily_cost: []
-  }
-};
+  return {
+    all: {
+      today_tok:  allDaily[allDaily.length-1].tokens,
+      week_tok:   allDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
+      all_tok:    sum(allDaily),
+      cost_today: allCost[allCost.length-1].cost,
+      cost_all:   sumCost(allCost),
+      cost_exact: false,
+      top_model:  'claude-sonnet-4-6',
+      daily:      allDaily,
+      daily_cost: allCost
+    },
+    claude_code: {
+      today_tok:  claudeDaily[claudeDaily.length-1].tokens,
+      week_tok:   claudeDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
+      all_tok:    sum(claudeDaily),
+      cost_today: claudeCost[claudeCost.length-1].cost,
+      cost_all:   sumCost(claudeCost),
+      cost_exact: true,
+      top_model:  'claude-sonnet-4-6',
+      daily:      claudeDaily,
+      daily_cost: claudeCost
+    },
+    codex: {
+      today_tok:  codexDaily[codexDaily.length-1].tokens,
+      week_tok:   codexDaily.slice(-7).reduce(function(s,d){return s+d.tokens},0),
+      all_tok:    sum(codexDaily),
+      cost_today: codexDaily.length > 0 ? codexCost[codexCost.length-1].cost : 0,
+      cost_all:   sumCost(codexCost),
+      cost_exact: false,
+      top_model:  'o4-mini',
+      daily:      codexDaily,
+      daily_cost: codexCost
+    },
+    opencode: {
+      today_tok:  0, week_tok: 0, all_tok: 0,
+      cost_today: 0, cost_all: 0, cost_exact: false,
+      top_model: '—', daily: [], daily_cost: []
+    }
+  };
+}
 
 // ── Real app HTML (exact copy from tokenbar.py MAIN_HTML) ──────────────────
 function appHTML(initialTab) { return `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -713,20 +721,21 @@ function injectData(d){__data=d;renderTab(__tab)}
 <\/script>
 </body></html>`; }
 
-function setupFrame(id, tab) {
+function setupFrame(id, tab, seed) {
+  var data = makeFrameData(seed);
   const f = document.getElementById(id);
   f.srcdoc = appHTML(tab);
   f.addEventListener('load', () => {
     try {
-      f.contentWindow.injectData(fakeData);
+      f.contentWindow.injectData(data);
     } catch(e) {
-      setTimeout(() => { try { f.contentWindow.injectData(fakeData); } catch(_){} }, 200);
+      setTimeout(() => { try { f.contentWindow.injectData(data); } catch(_){} }, 200);
     }
   });
 }
-setupFrame('app-frame-1', 'claude_code');
-setupFrame('app-frame-2', 'all');
-setupFrame('app-frame-3', 'codex');
+setupFrame('app-frame-1', 'claude_code', 42);
+setupFrame('app-frame-2', 'all', 99);
+setupFrame('app-frame-3', 'codex', 7);
 </script>
 </body>
 </html>
