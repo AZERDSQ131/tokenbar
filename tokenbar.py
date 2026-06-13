@@ -1125,23 +1125,19 @@ html,body{width:100%;height:100vh;background:#1c1c1e;color:#fff;
 
 <div class="settings-section">
   <div class="settings-label">Alerts</div>
-  <div class="settings-desc">Get notified on thresholds. Supports tokens or cost, daily or all time.</div>
   <div class="tags-wrap" id="alert-list"></div>
-  <div class="settings-row" style="gap:6px;flex-wrap:wrap">
-    <select class="settings-input narrow" id="alert-type" style="width:56px">
-      <option value="tokens">🔤</option>
-      <option value="cost">💰</option>
+  <div class="settings-row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+    <select class="settings-input narrow" id="alert-type" style="width:64px">
+      <option value="tokens">Tokens</option>
+      <option value="cost">Cost</option>
     </select>
-    <input class="settings-input narrow" id="alert-value" type="number" min="0.1" step="1" value="10000" placeholder="value" style="width:72px">
-    <select class="settings-input narrow" id="alert-period" style="width:72px">
-      <option value="today">today</option>
-      <option value="all">all</option>
-    </select>
-    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,.45);cursor:pointer">
-      <input type="checkbox" id="alert-step" style="accent-color:#7c6af7">
-      step
+    <span style="color:rgba(255,255,255,.3);font-size:11px">exceeds</span>
+    <input class="settings-input narrow" id="alert-value" type="number" min="0.1" step="1" value="10000" placeholder="value" style="width:76px;flex:none">
+    <label style="display:flex;align-items:center;gap:5px;margin-left:4px;font-size:11px;color:rgba(255,255,255,.45);cursor:pointer;user-select:none;white-space:nowrap">
+      <input type="checkbox" id="alert-step" style="accent-color:#7c6af7;width:13px;height:13px">
+      repeat
     </label>
-    <button class="sbtn" onclick="addAlert()">Add</button>
+    <button class="sbtn" onclick="addAlert()" style="font-size:12px;padding:5px 14px;margin-left:auto">Add</button>
   </div>
 </div>
 
@@ -1178,10 +1174,10 @@ function delExcl(btn){btn.parentElement.remove();saveSettings()}
 function renderAlerts(alerts){
   var el=document.getElementById('alert-list');if(!el)return;
   el.innerHTML='';(alerts||[]).forEach(function(a,i){
-    var icons={'tokens':'🔤','cost':'💰'};
-    var val=a.step?(a.type==='cost'?'$'+a.value:fmtNum(a.value)):(a.type==='cost'?'$'+a.value:fmtNum(a.value));
+    var fval=a.type==='cost'?'$'+a.value:fmtNum(a.value);
+    var label=fval+(a.step?' · repeat':'');
     var sp=document.createElement('span');sp.className='tag';sp.setAttribute('data-val',JSON.stringify(a));
-    sp.innerHTML=icons[a.type]+' '+val+(a.period==='all'?' · all':'')+(a.step?' · step':'')+'<button class="tag-del" onclick="delAlert(this)" title="Remove">&#x2715;</button>';
+    sp.innerHTML='<span style="opacity:.45;margin-right:2px">'+(a.type==='cost'?'cost':'tokens')+'</span>'+label+'<button class="tag-del" onclick="delAlert(this)" title="Remove">&#x2715;</button>';
     el.appendChild(sp)
   })
 }
@@ -1189,10 +1185,9 @@ function addAlert(){
   var type=document.getElementById('alert-type').value;
   var val=parseFloat(document.getElementById('alert-value').value);
   if(!val||val<=0)return;
-  var period=document.getElementById('alert-period').value;
   var step=document.getElementById('alert-step').checked;
   document.getElementById('alert-value').value='';document.getElementById('alert-step').checked=false;
-  var existing=SETTINGS.alerts||[];existing.push({type:type,value:val,period:period,step:step});
+  var existing=SETTINGS.alerts||[];existing.push({type:type,value:val,period:'all',step:step});
   SETTINGS.alerts=existing;renderAlerts(existing);saveSettings()
 }
 function delAlert(btn){
