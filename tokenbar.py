@@ -24,7 +24,17 @@ from Foundation import NSTimer, NSURL, NSNotificationCenter
 
 OC_DB  = Path.home() / ".local/share/opencode/opencode.db"
 CC_DIR = Path.home() / ".claude/projects"
-CX_DB  = Path.home() / ".codex/state_5.sqlite"
+
+
+def _find_codex_db() -> Path:
+    codex_root = Path.home() / ".codex"
+    candidates = [p for p in codex_root.rglob("state_*.sqlite") if p.is_file()]
+    if candidates:
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+    return codex_root / "state_5.sqlite"
+
+
+CX_DB = _find_codex_db()
 
 W, H   = 340, 320
 DEFAULT_REFRESH = 15.0
