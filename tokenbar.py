@@ -17,9 +17,10 @@ from AppKit import (
     NSView, NSMakeRect, NSSize, NSAppearance, NSVisualEffectView, NSColor,
     NSWindow, NSBackingStoreBuffered,
     NSUserNotificationCenter, NSUserNotification,
+    NSWindowWillCloseNotification,
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
-from Foundation import NSTimer, NSURL
+from Foundation import NSTimer, NSURL, NSNotificationCenter
 
 OC_DB  = Path.home() / ".local/share/opencode/opencode.db"
 CC_DIR = Path.home() / ".claude/projects"
@@ -132,6 +133,17 @@ def daily_list(d: dict) -> list:
 
 def daily_cost_list(d: dict) -> list:
     return [{"date": k, "cost": v} for k, v in sorted(d.items())]
+
+
+def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
+    """Return a local YYYY-MM-DD key from an ISO timestamp string."""
+    try:
+        dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
 
 
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
@@ -291,18 +303,28 @@ def fetch_claude_code(day_s, week_s, month_s):
         try: mtime = jf.stat().st_mtime
         except: continue
         if mtime < START_S: continue
-        fdate    = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        is_today = mtime >= day_s
-        is_week  = mtime >= week_s
-        in_month = mtime >= month_s
 
         try:
             with open(jf, encoding="utf-8", errors="ignore") as f:
                 for line in f:
                     try:
-                        msg   = json.loads(line).get("message", {})
+                        entry = json.loads(line)
+                        msg   = entry.get("message", {})
                         usage = msg.get("usage")
                         if not usage: continue
+                        ts_iso = entry.get("timestamp")
+                        event_ts = mtime
+                        if ts_iso:
+                            try:
+                                event_ts = datetime.fromisoformat(
+                                    ts_iso.replace("Z", "+00:00")
+                                ).timestamp()
+                            except Exception:
+                                event_ts = mtime
+                        fdate    = _local_day_key(ts_iso, event_ts) if ts_iso else datetime.fromtimestamp(event_ts).strftime("%Y-%m-%d")
+                        is_today = event_ts >= day_s
+                        is_week  = event_ts >= week_s
+                        in_month = event_ts >= month_s
                         i_tok  = usage.get("input_tokens", 0)
                         o_tok  = usage.get("output_tokens", 0)
                         c_writ = usage.get("cache_creation_input_tokens", 0)
@@ -1516,6 +1538,15 @@ All time: {fmt(total)} tokens""" + (f"""
         url = "https://x.com/intent/tweet?text=" + urllib.parse.quote(text)
         webbrowser.open(url)
 
+    def onWindowClose_(self, notification):
+        win = notification.object()
+        if win is self._settings_win:
+            self._settings_win = None
+            self._settings_wv  = None
+        if win is self._models_win:
+            self._models_win = None
+            self._models_wv  = None
+
     @objc.python_method
     def show_models_window(self):
         models = fetch_all_models()
@@ -1537,6 +1568,9 @@ All time: {fmt(total)} tokens""" + (f"""
         win.setAppearance_(dark)
         win.setBackgroundColor_(
             NSColor.colorWithCalibratedRed_green_blue_alpha_(0.11, 0.11, 0.11, 1.0))
+
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "onWindowClose:", NSWindowWillCloseNotification, win)
 
         wv = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, 400, 540), WKWebViewConfiguration.alloc().init())
@@ -1585,6 +1619,9 @@ All time: {fmt(total)} tokens""" + (f"""
         uc  = cfg.userContentController()
         for n in ("saveSettings",):
             uc.addScriptMessageHandler_name_(self._msg, n)
+
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "onWindowClose:", NSWindowWillCloseNotification, win)
 
         wv = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, 400, 540), cfg)
