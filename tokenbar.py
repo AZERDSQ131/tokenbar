@@ -3,6 +3,7 @@
 
 import json
 import sqlite3
+import re
 import time
 import urllib.parse
 import webbrowser
@@ -35,6 +36,17 @@ def _find_codex_db() -> Path:
 
 
 CX_DB = _find_codex_db()
+
+
+def _find_codex_logs_db() -> Path:
+    codex_root = Path.home() / ".codex"
+    candidates = [p for p in codex_root.rglob("logs_2.sqlite") if p.is_file()]
+    if candidates:
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+    return codex_root / "logs_2.sqlite"
+
+
+CX_LOGS_DB = _find_codex_logs_db()
 
 W, H   = 340, 320
 DEFAULT_REFRESH = 15.0
@@ -195,6 +207,100 @@ def claude_cost(model: str, inp: int, out: int,
 def estimate_cost(model_name: str, tokens: int) -> float:
     """Coût estimé quand on n'a que le total (Codex, OpenCode)."""
     return claude_cost(model_name, tokens // 2, tokens // 2)
+
+
+def _parse_codex_response_event(body: str):
+    idx = body.find('{"type":"response.completed"')
+    if idx == -1:
+        return None
+    try:
+        obj, _ = json.JSONDecoder(strict=False).raw_decode(body[idx:])
+        if obj.get("type") != "response.completed":
+            return None
+        return obj
+    except Exception:
+        return None
+
+
+def _fetch_codex_from_logs(day_ms, week_ms, month_ms, start_ms):
+    if not CX_LOGS_DB.exists():
+        return None
+
+    try:
+        con = sqlite3.connect(f"file:{CX_LOGS_DB}?mode=ro", uri=True)
+        c = con.cursor()
+        c.execute(
+            """SELECT ts, target, feedback_log_body
+               FROM logs
+               WHERE ts >= ? AND feedback_log_body LIKE '%{"type":"response.completed"%'
+               ORDER BY ts ASC""",
+            (int(start_ms / 1000),),
+        )
+
+        seen_ids = set()
+        total = today = week = 0
+        daily, daily_cost = {}, {}
+        models, models_1d, models_7d, models_1m = {}, {}, {}, {}
+
+        for ts, target, body in c.fetchall():
+            event = _parse_codex_response_event(body or "")
+            if not event:
+                continue
+            response = event.get("response") or {}
+            usage = response.get("usage") or {}
+            rid = response.get("id")
+            if rid and rid in seen_ids:
+                continue
+            if rid:
+                seen_ids.add(rid)
+
+            tok = usage.get("total_tokens")
+            if tok is None:
+                tok = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            if not tok:
+                continue
+
+            prefix = body[: body.find('{"type":"response.completed"')] if body else ""
+            model = response.get("model") or "codex"
+            m = re.search(r"\bmodel=([^\s]+)", prefix)
+            if m:
+                model = m.group(1)
+
+            event_ms = int(ts) * 1000
+            fdate = datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d")
+            est = estimate_cost(model, tok)
+
+            total += tok
+            models[model] = models.get(model, 0) + tok
+            if event_ms >= day_ms:
+                today += tok
+                models_1d[model] = models_1d.get(model, 0) + tok
+            if event_ms >= week_ms:
+                week += tok
+                models_7d[model] = models_7d.get(model, 0) + tok
+            if event_ms >= month_ms:
+                daily[fdate] = daily.get(fdate, 0) + tok
+                daily_cost[fdate] = daily_cost.get(fdate, 0.0) + est
+                models_1m[model] = models_1m.get(model, 0) + tok
+
+        con.close()
+        cost_today = sum(estimate_cost(m, t) for m, t in models_1d.items())
+        cost_all = sum(estimate_cost(m, t) for m, t in models.items())
+        return {
+            "today": today,
+            "week": week,
+            "total": total,
+            "daily": daily,
+            "daily_cost": daily_cost,
+            "models": models,
+            "models_1d": models_1d,
+            "models_7d": models_7d,
+            "models_1m": models_1m,
+            "cost_today": cost_today,
+            "cost_all": cost_all,
+        }
+    except Exception:
+        return None
 
 
 # ── OpenCode ──────────────────────────────────────────────────────────────────
@@ -377,6 +483,10 @@ def fetch_claude_code(day_s, week_s, month_s):
 # ── Codex ─────────────────────────────────────────────────────────────────────
 
 def fetch_codex(day_ms, week_ms, month_ms):
+    log_data = _fetch_codex_from_logs(day_ms, week_ms, month_ms, START_S * 1000)
+    if log_data is not None:
+        return log_data
+
     if not CX_DB.exists():
         return {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
                 "cost_today": 0.0, "cost_all": 0.0}
