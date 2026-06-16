@@ -483,66 +483,76 @@ def fetch_claude_code(day_s, week_s, month_s):
 # ── Codex ─────────────────────────────────────────────────────────────────────
 
 def fetch_codex(day_ms, week_ms, month_ms):
-    log_data = _fetch_codex_from_logs(day_ms, week_ms, month_ms, START_S * 1000)
-    if log_data is not None:
-        return log_data
+    result = _fetch_codex_from_logs(day_ms, week_ms, month_ms, START_S * 1000)
+    if result is None:
+        if not CX_DB.exists():
+            result = {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
+                      "cost_today": 0.0, "cost_all": 0.0}
+        else:
+            try:
+                con = sqlite3.connect(f"file:{CX_DB}?mode=ro", uri=True)
+                c   = con.cursor()
 
-    if not CX_DB.exists():
-        return {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
-                "cost_today": 0.0, "cost_all": 0.0}
-    try:
-        con = sqlite3.connect(f"file:{CX_DB}?mode=ro", uri=True)
-        c   = con.cursor()
+                def one(q, *a):
+                    c.execute(q, a); return c.fetchone()[0] or 0
 
-        def one(q, *a):
-            c.execute(q, a); return c.fetchone()[0] or 0
+                start_ms = int(START_S * 1000)
 
-        start_ms = int(START_S * 1000)
+                total = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", start_ms)
+                today = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", day_ms)
+                week  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", week_ms)
 
-        total = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", start_ms)
-        today = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", day_ms)
-        week  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE tokens_used>0 AND created_at_ms>=?", week_ms)
+                c.execute("""SELECT date(created_at_ms/1000,'unixepoch','localtime'),
+                                    COALESCE(SUM(tokens_used),0)
+                             FROM threads WHERE tokens_used>0 AND created_at_ms>=?
+                             GROUP BY 1""", (month_ms,))
+                daily = {r[0]: r[1] for r in c.fetchall()}
 
-        c.execute("""SELECT date(created_at_ms/1000,'unixepoch','localtime'),
-                            COALESCE(SUM(tokens_used),0)
-                     FROM threads WHERE tokens_used>0 AND created_at_ms>=?
-                     GROUP BY 1""", (month_ms,))
-        daily = {r[0]: r[1] for r in c.fetchall()}
+                c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
+                                    COALESCE(SUM(tokens_used),0)
+                             FROM threads WHERE tokens_used>0 AND created_at_ms>=?
+                             GROUP BY 1 ORDER BY 2 DESC""", (start_ms,))
+                models = {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
 
-        c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
-                            COALESCE(SUM(tokens_used),0)
-                     FROM threads WHERE tokens_used>0 AND created_at_ms>=?
-                     GROUP BY 1 ORDER BY 2 DESC""", (start_ms,))
-        models = {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
+                c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
+                                    COALESCE(SUM(tokens_used),0)
+                             FROM threads WHERE tokens_used>0 AND created_at_ms>=?
+                             GROUP BY 1""", (day_ms,))
+                today_models = {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
+                cost_today = sum(estimate_cost(n, t) for n, t in today_models.items())
+                cost_all   = sum(estimate_cost(n, t) for n, t in models.items())
 
-        c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
-                            COALESCE(SUM(tokens_used),0)
-                     FROM threads WHERE tokens_used>0 AND created_at_ms>=?
-                     GROUP BY 1""", (day_ms,))
-        today_models = {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
-        cost_today = sum(estimate_cost(n, t) for n, t in today_models.items())
-        cost_all   = sum(estimate_cost(n, t) for n, t in models.items())
+                def cm(since):
+                    c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
+                                        COALESCE(SUM(tokens_used),0)
+                                 FROM threads WHERE tokens_used>0 AND created_at_ms>=?
+                                 GROUP BY 1 ORDER BY 2 DESC""", (since,))
+                    return {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
+                models_1d = today_models
+                models_7d = cm(week_ms)
+                models_1m = cm(month_ms)
+                daily_cost = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
 
-        def cm(since):
-            c.execute("""SELECT COALESCE(NULLIF(model,''), model_provider, 'codex'),
-                                COALESCE(SUM(tokens_used),0)
-                         FROM threads WHERE tokens_used>0 AND created_at_ms>=?
-                         GROUP BY 1 ORDER BY 2 DESC""", (since,))
-            return {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
-        models_1d = today_models
-        models_7d = cm(week_ms)
-        models_1m = cm(month_ms)
-        daily_cost = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
+                con.close()
+                result = {"today": today, "week": week, "total": total,
+                          "daily": daily, "daily_cost": daily_cost, "models": models,
+                          "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
+                          "cost_today": cost_today, "cost_all": cost_all}
+            except Exception:
+                result = {"today": 0, "week": 0, "total": 0, "daily": {}, "daily_cost": {}, "models": {},
+                          "models_1d": {}, "models_7d": {}, "models_1m": {},
+                          "cost_today": 0.0, "cost_all": 0.0}
 
-        con.close()
-        return {"today": today, "week": week, "total": total,
-                "daily": daily, "daily_cost": daily_cost, "models": models,
-                "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
-                "cost_today": cost_today, "cost_all": cost_all}
-    except Exception:
-        return {"today": 0, "week": 0, "total": 0, "daily": {}, "daily_cost": {}, "models": {},
-                "models_1d": {}, "models_7d": {}, "models_1m": {},
-                "cost_today": 0.0, "cost_all": 0.0}
+    now_s = int(time.time())
+    from_dt = datetime.fromtimestamp(month_ms / 1000)
+    to_dt = datetime.fromtimestamp(now_s)
+    d = from_dt
+    while d <= to_dt:
+        key = d.strftime("%Y-%m-%d")
+        result.setdefault("daily", {}).setdefault(key, 0)
+        result.setdefault("daily_cost", {}).setdefault(key, 0.0)
+        d += timedelta(days=1)
+    return result
 
 
 # ── Combined ──────────────────────────────────────────────────────────────────
