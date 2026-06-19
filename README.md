@@ -8,6 +8,8 @@ Tokenbar reads local files written by Claude Code and Codex — no login, no API
 ![Python 3](https://img.shields.io/badge/Python-3-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
+<img width="338" height="513" alt="image" src="https://github.com/user-attachments/assets/b57d480a-28dd-4146-bf38-1e8dcd3b1995" />
+
 ---
 
 ## What it does
