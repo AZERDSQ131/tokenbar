@@ -432,13 +432,14 @@ def fetch_claude_code(day_s, week_s, month_s):
         return {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
                 "models_1d": {}, "models_7d": {}, "models_1m": {},
                 "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
-                "cost_today": 0.0, "cost_all": 0.0, "breakdown_today": {}}
+                "cost_today": 0.0, "cost_all": 0.0, "breakdown_today": {}, "daily_breakdown": {}}
 
     models, models_1d, models_7d, models_1m = {}, {}, {}, {}
     model_costs, model_costs_1d, model_costs_7d, model_costs_1m = {}, {}, {}, {}
     total, today, week = 0, 0, 0
     cost_all, cost_today = 0.0, 0.0
     daily, daily_cost = {}, {}
+    daily_inp, daily_out, daily_cr_d, daily_cw_d = {}, {}, {}, {}
     bd_i, bd_o, bd_cr, bd_cw = 0, 0, 0, 0
 
     for jf in CC_DIR.rglob("*.jsonl"):
@@ -495,6 +496,10 @@ def fetch_claude_code(day_s, week_s, month_s):
                             daily_cost[fdate] = daily_cost.get(fdate, 0.0) + est
                             models_1m[m]      = models_1m.get(m, 0) + tok
                             model_costs_1m[m] = model_costs_1m.get(m, 0.0) + est
+                            daily_inp[fdate]  = daily_inp.get(fdate, 0) + i_tok
+                            daily_out[fdate]  = daily_out.get(fdate, 0) + o_tok
+                            daily_cr_d[fdate] = daily_cr_d.get(fdate, 0) + c_read
+                            daily_cw_d[fdate] = daily_cw_d.get(fdate, 0) + c_writ
                     except: pass
         except: pass
 
@@ -505,7 +510,10 @@ def fetch_claude_code(day_s, week_s, month_s):
               "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
               "cost_today": cost_today, "cost_all": cost_all,
               "breakdown_today": {"input": bd_i, "output": bd_o,
-                                  "cache_read": bd_cr, "cache_write": bd_cw}}
+                                  "cache_read": bd_cr, "cache_write": bd_cw},
+              "daily_breakdown": {d: {"i": daily_inp.get(d,0), "o": daily_out.get(d,0),
+                                      "cr": daily_cr_d.get(d,0), "cw": daily_cw_d.get(d,0)}
+                                  for d in daily}}
     _cc_cache = {"ts": now, "data": result}
     return result
 
@@ -640,6 +648,7 @@ def fetch():
             "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
             "cost_exact": False,
             "breakdown_today": cc.get("breakdown_today", {}),
+            "daily_breakdown": cc.get("daily_breakdown", {}),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
@@ -656,6 +665,7 @@ def fetch():
             "cost_all":   cc["cost_all"],
             "cost_exact": False,
             "breakdown_today": cc.get("breakdown_today", {}),
+            "daily_breakdown": cc.get("daily_breakdown", {}),
             "tok_per_hour": tok_per_hour,
         },
         "codex": {
@@ -779,11 +789,17 @@ canvas{display:block;width:100%}
 .bd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
 .bd-cell .bd-lbl{font-size:10px;color:rgba(255,255,255,.38)}
 .bd-cell .bd-val{font-size:13px;font-weight:600;letter-spacing:-.4px}
+#bd-in{color:#60a5fa}
+#bd-out{color:#34d399}
+#bd-cr{color:#fbbf24}
+#bd-cw{color:#a78bfa}
 .bd-metrics{display:flex;gap:18px;margin-top:7px;font-size:11px;color:rgba(255,255,255,.4)}
 .bd-metrics b{color:rgba(255,255,255,.82);font-weight:600}
 .bd-hit-good{color:#4ade80!important}
 .ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
 .ds-row span{color:rgba(255,255,255,.72)}
+/* tooltip élargi pour breakdown */
+#tip{min-width:160px;max-width:220px;line-height:1.5}
 
 /* footer */
 .footer{border-top:1px solid rgba(255,255,255,.08);display:flex;padding:4px 8px}
@@ -837,10 +853,10 @@ canvas{display:block;width:100%}
 <div id="bd-section" class="bd-section" style="display:none">
   <div class="bd-title">Today's breakdown</div>
   <div class="bd-grid">
-    <div class="bd-cell"><div class="bd-lbl">Input</div><div class="bd-val" id="bd-in">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl">Output</div><div class="bd-val" id="bd-out">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl">Cache R</div><div class="bd-val" id="bd-cr">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl">Cache W</div><div class="bd-val" id="bd-cw">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl"><span style="color:#60a5fa">●</span> Input</div><div class="bd-val" id="bd-in">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl"><span style="color:#34d399">●</span> Output</div><div class="bd-val" id="bd-out">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl"><span style="color:#fbbf24">●</span> Cache R</div><div class="bd-val" id="bd-cr">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl"><span style="color:#a78bfa">●</span> Cache W</div><div class="bd-val" id="bd-cw">—</div></div>
   </div>
   <div class="bd-metrics">
     <span>Cache hit: <b id="bd-hit">—</b></span>
@@ -869,7 +885,15 @@ let __lastDailyCost = [];
 let __chartHits     = [];
 let __chartHits2    = [];
 let __settings      = {};
+let __dailyBreakdown = {};
 const STYLES        = ['bars', 'line', 'area'];
+const BD_COLORS = {
+  cr: {hex:'#fbbf24', rgba:'rgba(251,191,36,'},
+  i:  {hex:'#60a5fa', rgba:'rgba(96,165,250,'},
+  cw: {hex:'#a78bfa', rgba:'rgba(167,139,250,'},
+  o:  {hex:'#34d399', rgba:'rgba(52,211,153,'},
+};
+const BD_ORDER = ['cr','i','cw','o'];
 
 function fmt(n){
   if(!n)return'0';
@@ -916,6 +940,7 @@ function renderTab(tab) {
     'All time: ' + fmt(s.all_tok) + ' tokens' + costStr;
   document.getElementById('s-model').textContent =
     s.top_model && s.top_model !== '—' ? 'Top model: ' + s.top_model : '';
+  __dailyBreakdown = s.daily_breakdown || {};
   drawChart(s.daily || []);
   drawCostChart(s.daily_cost || []);
 
@@ -1050,9 +1075,76 @@ function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
   }
 }
 
+function drawStackedBars(daily) {
+  __chartHits.length = 0;
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const dpr = window.devicePixelRatio||2, cw = cv.offsetWidth||300, ch = 90;
+  cv.style.height = ch+'px'; cv.width = cw*dpr; cv.height = ch*dpr; ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,cw,ch);
+  if (!daily||!daily.length) return;
+  const vals = daily.map(d=>d.tokens), max = Math.max(...vals,1), n = daily.length, gap = 2;
+  const leftPad = 32, drawW = cw-leftPad;
+  const bw = (drawW-gap)/n-gap, bMaxH = ch-18, bl = ch-10;
+  ctx.font = '9px -apple-system,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+  [0.25,0.5,0.75,1].forEach(function(lvl){
+    const ly = bl-lvl*bMaxH;
+    ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(leftPad,ly); ctx.lineTo(cw,ly); ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,.22)'; ctx.fillText(fmt(lvl*max),leftPad-5,ly);
+  });
+  ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.setLineDash([2,5]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(leftPad,bl+2); ctx.lineTo(cw,bl+2); ctx.stroke();
+  ctx.setLineDash([]);
+  daily.forEach(function(d,i){
+    const total = d.tokens||1;
+    const bh = Math.max(2, total/max*bMaxH);
+    const x = i*(bw+gap)+gap+leftPad;
+    const bd = __dailyBreakdown[d.date];
+    if (bd && (bd.cr||bd.i||bd.cw||bd.o)) {
+      let yOff = 0;
+      BD_ORDER.forEach(function(key){
+        const v = bd[key]||0; if (!v) return;
+        const segH = Math.max(0, (v/total)*bh);
+        const col = BD_COLORS[key];
+        ctx.fillStyle = col.rgba + '0.82)';
+        ctx.fillRect(x, bl-bh+yOff, bw, segH);
+        yOff += segH;
+      });
+    } else {
+      const r = total/max;
+      ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';
+      drawBar(ctx,x,bl-bh,bw,bh,2);
+    }
+    __chartHits.push({x0:x,x1:x+bw,cx:x+bw/2,y:bl-bh,date:d.date,val:total});
+  });
+}
+
+function buildTipHtml(hit) {
+  const bd = __dailyBreakdown[hit.date];
+  const header = '<div style="font-weight:600;margin-bottom:5px;font-size:12px">'+fmtDate(hit.date)+'&nbsp;&nbsp;'+fmt(hit.val)+'</div>';
+  if (!bd) return header;
+  const total = hit.val||1;
+  const rows = BD_ORDER.map(function(key){
+    const v = bd[key]||0; if (!v) return '';
+    const pct = Math.round(v/total*100);
+    const col = BD_COLORS[key].hex;
+    const label = {cr:'Cache R',i:'Input',cw:'Cache W',o:'Output'}[key];
+    return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px">'
+      +'<span><span style="color:'+col+'">●</span>&nbsp;'+label+'</span>'
+      +'<span style="color:rgba(255,255,255,.7)">'+fmt(v)+'&nbsp;<span style="opacity:.45">'+pct+'%</span></span>'
+      +'</div>';
+  }).join('');
+  return header+rows;
+}
+
 function drawChart(daily) {
   __lastDaily = daily || [];
-  drawChartWith('cv', filterByPeriod(__lastDaily), d=>d.tokens, __chartHits, true);
+  const filtered = filterByPeriod(__lastDaily);
+  if (__chartStyle==='bars' && Object.keys(__dailyBreakdown).length>0) {
+    drawStackedBars(filtered);
+  } else {
+    drawChartWith('cv', filtered, d=>d.tokens, __chartHits, true);
+  }
 }
 
 function drawCostChart(daily) {
@@ -1061,7 +1153,7 @@ function drawCostChart(daily) {
 }
 
 (function(){
-  function makeTip(cvId,tipId,hitsRef,fmtFn){
+  function makeTip(cvId,tipId,hitsRef,fmtFn,isMain){
     const cv=document.getElementById(cvId);
     cv.addEventListener('mousemove',function(e){
       if(!hitsRef.length)return;
@@ -1069,7 +1161,11 @@ function drawCostChart(daily) {
       for(const h of hitsRef){if(mx>=h.x0&&mx<=h.x1){hit=h;break;}}
       const tip=document.getElementById(tipId);
       if(hit){
-        tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
+        if(isMain && Object.keys(__dailyBreakdown).length>0){
+          tip.innerHTML=buildTipHtml(hit);
+        }else{
+          tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
+        }
         tip.style.display='block';
         const th=tip.offsetHeight||22;
         tip.style.left=(20+hit.cx)+'px';
@@ -1081,8 +1177,8 @@ function drawCostChart(daily) {
     });
   }
   function fmtC(c){if(!c||c<0.001)return'$0.000';if(c<0.01)return'$'+c.toFixed(3);return'$'+c.toFixed(2);}
-  makeTip('cv','tip',__chartHits,fmt);
-  makeTip('cv2','tip2',__chartHits2,fmtC);
+  makeTip('cv','tip',__chartHits,fmt,true);
+  makeTip('cv2','tip2',__chartHits2,fmtC,false);
 })();
 
 function injectData(d) {
