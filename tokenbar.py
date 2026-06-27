@@ -151,7 +151,15 @@ def _navbar_title(today_tok):
     lim = _limits_cache.get("data")
     tok_s = fmt(today_tok)
     if lim and lim.get("session_used") is not None:
-        return f"{tok_s} / {lim['session_used']}%"
+        used = lim["session_used"]
+        if used >= 100 and lim.get("session_reset_ts"):
+            diff = lim["session_reset_ts"] - time.time()
+            if diff > 0:
+                h = int(diff // 3600)
+                m = int((diff % 3600) // 60)
+                cd = f"{h}h{m:02d}m" if h > 0 else f"{m}m"
+                return f"{tok_s} / {cd}"
+        return f"{tok_s} / {used}%"
     return tok_s
 
 
