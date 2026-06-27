@@ -157,7 +157,13 @@ def _navbar_title(today_tok):
             if diff > 0:
                 h = int(diff // 3600)
                 m = int((diff % 3600) // 60)
-                cd = f"{h}h{m:02d}m" if h > 0 else f"{m}m"
+                s = int(diff % 60)
+                if h > 0:
+                    cd = f"{h}h{m:02d}m{s:02d}s"
+                elif m > 0:
+                    cd = f"{m}m{s:02d}s"
+                else:
+                    cd = f"{s}s"
                 return f"{tok_s} / {cd}"
         return f"{tok_s} / {used}%"
     return tok_s
@@ -1449,10 +1455,13 @@ function startCountdown(elId, usedPct, resetTs) {
   if (!el) return;
   function tick() {
     const diff = resetTs - Date.now() / 1000;
-    if (diff <= 0) { el.textContent = '0m'; return true; }
+    if (diff <= 0) { el.textContent = '0s'; return true; }
     const h = Math.floor(diff / 3600);
     const m = Math.floor((diff % 3600) / 60);
-    el.textContent = h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+    const s = Math.floor(diff % 60);
+    if (h > 0) el.textContent = h + 'h ' + m + 'm ' + s + 's';
+    else if (m > 0) el.textContent = m + 'm ' + s + 's';
+    else el.textContent = s + 's';
     return false;
   }
   tick();
