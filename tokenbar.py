@@ -1377,23 +1377,52 @@ function barColor(pct) {
   return '#4ade80';
 }
 
-function renderLimBar(name, usedPct, resetStr) {
+let __countdownTimers = [];
+
+function clearCountdowns() {
+  __countdownTimers.forEach(function(id) { clearInterval(id); });
+  __countdownTimers = [];
+}
+
+function renderLimBar(name, usedPct, resetStr, resetTs) {
   const used = usedPct != null ? usedPct : 0;
   const color = barColor(used);
+  const exhausted = used >= 100;
+  const numId = 'lim-num-' + name.toLowerCase().replace(/\s+/g, '-');
   return '<div class="lim-bar">' +
     '<div class="lim-bar-top">' +
       '<span class="lim-bar-name">' + name + '</span>' +
-      '<span class="lim-bar-num" style="color:' + color + '">' + used + '%</span>' +
+      '<span class="lim-bar-num" id="' + numId + '" style="color:' + color + '">' +
+        (exhausted && resetTs ? '&#x2026;' : used + '%') +
+      '</span>' +
     '</div>' +
     '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
     '<div class="lim-bar-sub">' +
-      '<span>' + used + '% utilis&#233;</span>' +
+      '<span>' + (exhausted ? 'Limite atteinte' : used + '% utilis&#233;') + '</span>' +
       (resetStr ? '<span>Reset ' + resetStr + '</span>' : '') +
     '</div>' +
   '</div>';
 }
 
+function startCountdown(elId, resetTs) {
+  if (!resetTs) return;
+  const el = document.getElementById(elId);
+  if (!el) return;
+  function tick() {
+    const diff = resetTs - Date.now() / 1000;
+    if (diff <= 0) { el.textContent = '0m'; return true; }
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    el.textContent = h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+    return false;
+  }
+  tick();
+  var id = setInterval(function() { if (tick()) clearInterval(id); }, 1000);
+  __countdownTimers.push(id);
+}
+
 function renderLimits() {
+  clearCountdowns();
   const lim = __limitsData;
   const el = document.getElementById('lim-body');
   if (!lim) {
@@ -1406,11 +1435,14 @@ function renderLimits() {
   }
   var html = '<div class="lim-body">';
   if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
-  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset);
-  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset);
-  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset);
+  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
+  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
+  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
   html += '</div>';
   el.innerHTML = html;
+  startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
+  startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
+  startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
 }
 
 """
