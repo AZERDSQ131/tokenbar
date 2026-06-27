@@ -146,6 +146,14 @@ def fmt(n):
     return str(n)
 
 
+def _navbar_title(today_tok):
+    lim = _limits_cache.get("data")
+    tok_s = fmt(today_tok)
+    if lim and lim.get("session_used") is not None:
+        return f"◆ {tok_s} / {lim['session_used']}%"
+    return f"◆ {tok_s}"
+
+
 def model_id(raw):
     if not raw: return "—"
     try: return json.loads(raw).get("id", raw)
@@ -782,35 +790,19 @@ canvas{display:block;width:100%}
 
 /* ── Limites page ── */
 #page-limits{display:none}
-.lim-section{padding:14px 20px 6px}
-.lim-title{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:rgba(255,255,255,.35);margin-bottom:12px}
-.lim-bar-wrap{margin-bottom:14px}
-.lim-bar-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
-.lim-bar-label{font-size:13px;font-weight:600;color:rgba(255,255,255,.9)}
-.lim-bar-pct{font-size:22px;font-weight:700;letter-spacing:-.6px;line-height:1}
-.lim-bar-used{font-size:11px;color:rgba(255,255,255,.35);margin-top:1px}
-.lim-track{height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden;margin-bottom:4px}
-.lim-fill{height:100%;border-radius:4px;transition:width .5s cubic-bezier(.4,0,.2,1)}
-.lim-reset{font-size:10px;color:rgba(255,255,255,.3);text-align:right}
-.lim-divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:4px 0 0}
-.lim-stats-wrap{padding:10px 20px 12px}
-.lim-stats-title{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:rgba(255,255,255,.35);margin-bottom:8px}
-.lim-stat-tabs{display:flex;gap:1px;margin-bottom:10px}
-.lim-stab{background:none;border:none;color:rgba(255,255,255,.28);font-family:inherit;
-  font-size:11px;padding:3px 10px;border-radius:5px;cursor:pointer;user-select:none}
-.lim-stab.active{color:rgba(255,255,255,.8);background:rgba(255,255,255,.1)}
-.lim-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;
-  color:rgba(255,255,255,.55)}
-.lim-row b{color:rgba(255,255,255,.85);font-weight:600}
-.lim-beh-item{font-size:11px;color:rgba(255,255,255,.45);padding:2px 0;line-height:1.4}
-.lim-beh-item b{color:rgba(255,255,255,.7);font-weight:600}
-.lim-top{font-size:10.5px;color:rgba(255,255,255,.38);padding:2px 0;line-height:1.4}
-.lim-top span{color:rgba(255,255,255,.6)}
+.lim-body{padding:16px 20px 10px}
+.lim-plan{font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:rgba(255,255,255,.28);margin-bottom:16px}
+.lim-bar{margin-bottom:20px}
+.lim-bar-top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px}
+.lim-bar-name{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+  color:rgba(255,255,255,.38)}
+.lim-bar-num{font-size:28px;font-weight:700;letter-spacing:-.8px;line-height:1}
+.lim-track{height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-bottom:5px}
+.lim-fill{height:100%;border-radius:3px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+.lim-bar-sub{display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,.25)}
 .lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
 .lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
-.lim-updated{font-size:9.5px;color:rgba(255,255,255,.2);padding:0 20px 8px;text-align:right}
 .btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
@@ -1285,7 +1277,6 @@ function setColor(hex){
 // ── Limites ──────────────────────────────────────────────────────────────────
 
 let __limitsData = null;
-let __limStatTab = '24h';
 let __onLimitsPage = false;
 
 function switchToLimits() {
@@ -1300,102 +1291,46 @@ function switchToLimits() {
   });
 }
 
-function barColor(usedPct) {
-  if (usedPct >= 90) return '#f87171';
-  if (usedPct >= 70) return '#fb923c';
+function barColor(pct) {
+  if (pct >= 90) return '#f87171';
+  if (pct >= 70) return '#fb923c';
   return '#4ade80';
 }
 
-function renderLimBar(id, label, usedPct, leftPct, resetStr) {
+function renderLimBar(name, usedPct, resetStr) {
   const used = usedPct != null ? usedPct : 0;
-  const left = leftPct != null ? leftPct : (100 - used);
   const color = barColor(used);
-  return '<div class="lim-bar-wrap">' +
-    '<div class="lim-bar-header">' +
-      '<span class="lim-bar-label">' + label + '</span>' +
-      '<span class="lim-bar-pct" style="color:' + color + '">' + left + '%</span>' +
+  return '<div class="lim-bar">' +
+    '<div class="lim-bar-top">' +
+      '<span class="lim-bar-name">' + name + '</span>' +
+      '<span class="lim-bar-num" style="color:' + color + '">' + used + '%</span>' +
     '</div>' +
-    '<div class="lim-bar-used">' + used + '% utilisé</div>' +
     '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
-    (resetStr ? '<div class="lim-reset">Reset ' + resetStr + '</div>' : '') +
+    '<div class="lim-bar-sub">' +
+      '<span>' + used + '% utilis&#233;</span>' +
+      (resetStr ? '<span>Reset ' + resetStr + '</span>' : '') +
+    '</div>' +
   '</div>';
-}
-
-function renderStatsBlock(stats) {
-  if (!stats) return '<div style="font-size:11px;color:rgba(255,255,255,.25);padding:4px 0">Aucune donnée.</div>';
-  var html = '<div class="lim-row"><span>Requêtes</span><b>' + stats.requests.toLocaleString() + '</b></div>' +
-             '<div class="lim-row"><span>Sessions</span><b>' + stats.sessions + '</b></div>';
-  if (stats.behaviors && stats.behaviors.length) {
-    html += '<div style="margin-top:6px">';
-    stats.behaviors.forEach(function(b){
-      html += '<div class="lim-beh-item"><b>' + b.pct + '%</b> ' + b.label + '</div>';
-    });
-    html += '</div>';
-  }
-  if (stats.top_subagents) html += '<div class="lim-top">Subagents: <span>' + stats.top_subagents + '</span></div>';
-  if (stats.top_mcp)       html += '<div class="lim-top">MCP: <span>' + stats.top_mcp + '</span></div>';
-  if (stats.top_skills)    html += '<div class="lim-top">Skills: <span>' + stats.top_skills + '</span></div>';
-  return html;
 }
 
 function renderLimits() {
   const lim = __limitsData;
   const el = document.getElementById('lim-body');
   if (!lim) {
-    el.innerHTML = '<div class="lim-loading">Chargement en cours&#x2026;<br><span style="font-size:10px;opacity:.5">Peut prendre ~10s au premier lancement</span></div>';
+    el.innerHTML = '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
     return;
   }
-  if (lim.error && !lim.session_pct && !lim.week_pct) {
+  if (lim.error && lim.session_used == null && lim.week_used == null) {
     el.innerHTML = '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
     return;
   }
-
-  var html = '<div class="lim-section">';
-  if (lim.plan) {
-    html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-bottom:10px">' + lim.plan + '</div>';
-  }
-
-  html += '<div class="lim-title">Limites d&#39;utilisation</div>';
-
-  if (lim.session_pct != null) {
-    html += renderLimBar('session', 'Session courante', lim.session_used, lim.session_pct, lim.session_reset);
-  }
-  if (lim.week_pct != null) {
-    html += renderLimBar('week', 'Semaine (tous modèles)', lim.week_used, lim.week_pct, lim.week_reset);
-  }
-  if (lim.opus_pct != null) {
-    html += renderLimBar('opus', 'Semaine (Opus/Sonnet)', lim.opus_used, lim.opus_pct, lim.opus_reset);
-  }
-
+  var html = '<div class="lim-body">';
+  if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
+  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset);
+  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset);
+  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset);
   html += '</div>';
-
-  if (lim.stats_24h || lim.stats_7d) {
-    html += '<hr class="lim-divider"><div class="lim-stats-wrap">' +
-      '<div class="lim-stats-title">Comportements</div>' +
-      '<div class="lim-stat-tabs">' +
-        '<button class="lim-stab' + (__limStatTab==='24h'?' active':'') + '" onclick="setLimTab(&#39;24h&#39;)">24h</button>' +
-        '<button class="lim-stab' + (__limStatTab==='7d'?' active':'') + '" onclick="setLimTab(&#39;7d&#39;)">7 jours</button>' +
-      '</div>' +
-      '<div id="lim-stat-content">' +
-        renderStatsBlock(__limStatTab === '24h' ? lim.stats_24h : lim.stats_7d) +
-      '</div>' +
-    '</div>';
-  }
-
-  html += '</div>';
-
   el.innerHTML = html;
-}
-
-function setLimTab(t) {
-  __limStatTab = t;
-  document.querySelectorAll('.lim-stab').forEach(function(b){ b.classList.toggle('active', b.textContent.replace(' ','')===t.replace('h','h')); });
-  const stats = __limitsData ? (__limStatTab === '24h' ? __limitsData.stats_24h : __limitsData.stats_7d) : null;
-  const el = document.getElementById('lim-stat-content');
-  if (el) el.innerHTML = renderStatsBlock(stats);
-  document.querySelectorAll('.lim-stab').forEach(function(b){
-    b.classList.toggle('active', (t==='24h' && b.textContent.trim()==='24h') || (t==='7d' && b.textContent.trim()==='7 jours'));
-  });
 }
 
 """
@@ -1883,9 +1818,7 @@ class AppDelegate(NSObject):
     def tick_(self, _):
         data = fetch()
         if data:
-            cost = data['all']['cost_today']
-            cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
-            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
+            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         if self._pop.isShown():
             self._inject_js(data)
         if not hasattr(self, '_login_start_synced'):
@@ -2009,9 +1942,7 @@ class AppDelegate(NSObject):
         """Injecte MAIN_JS dans le monde page, puis les données."""
         data = fetch()
         if data:
-            cost = data['all']['cost_today']
-            cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
-            self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
+            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         def on_bootstrap(result, error):
             if not error and data:
                 self._inject_js(data)
@@ -2022,9 +1953,7 @@ class AppDelegate(NSObject):
         data = fetch()
         if not data:
             self._item.button().setTitle_("◆ ⚠"); return
-        cost = data['all']['cost_today']
-        cost_s = f"${cost:.2f}" if cost and cost >= 0.01 else f"${cost:.3f}" if cost and cost >= 0.001 else "$0.00"
-        self._item.button().setTitle_(f"◆ {fmt(data['all']['today_tok'])} / {cost_s}")
+        self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         self._inject_js(data)
 
     @objc.python_method
