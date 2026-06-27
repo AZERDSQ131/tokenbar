@@ -150,8 +150,8 @@ def _navbar_title(today_tok):
     lim = _limits_cache.get("data")
     tok_s = fmt(today_tok)
     if lim and lim.get("session_used") is not None:
-        return f"◆{tok_s} / {lim['session_used']}%"
-    return f"◆{tok_s}"
+        return f"{tok_s} / {lim['session_used']}%"
+    return tok_s
 
 
 def model_id(raw):
@@ -1760,7 +1760,7 @@ class AppDelegate(NSObject):
         self._bar  = NSStatusBar.systemStatusBar()
         self._item = self._bar.statusItemWithLength_(NSVariableStatusItemLength)
         btn = self._item.button()
-        btn.setTitle_("◆…")
+        btn.setTitle_("…")
         btn.setTarget_(self)
         btn.setAction_("toggle:")
 
@@ -1952,7 +1952,7 @@ class AppDelegate(NSObject):
     def inject_data(self):
         data = fetch()
         if not data:
-            self._item.button().setTitle_("◆⚠"); return
+            self._item.button().setTitle_("⚠"); return
         self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         self._inject_js(data)
 
