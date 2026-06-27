@@ -242,16 +242,47 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub('', text)
 
 
-_RESET_RE = re.compile(r'in\s+(?:about\s+)?(\d+)\s+(hour|minute|day)s?', re.IGNORECASE)
+_RESET_REL_RE = re.compile(r'in\s+(?:about\s+)?(\d+)\s+(hour|minute|day)s?', re.IGNORECASE)
+_RESET_ABS_RE = re.compile(
+    r'(\w{3})\s+(\d+)\s+at\s+(\d{1,2}):(\d{2})\s*([ap]m)',
+    re.IGNORECASE)
+_MONTH_MAP = {m: i+1 for i, m in enumerate(
+    ['jan','feb','mar','apr','may','jun',
+     'jul','aug','sep','oct','nov','dec'])}
 
-def _parse_reset_offset(text):
+def _parse_reset_ts(text):
     if not text:
         return None
-    m = _RESET_RE.search(text)
+    now = time.time()
+    # relative: "in X hours/minutes/days"
+    m = _RESET_REL_RE.search(text)
     if m:
         n = int(m.group(1))
         unit = m.group(2).lower()
-        return n * {'hour': 3600, 'minute': 60, 'day': 86400}.get(unit, 3600)
+        offset = n * {'hour': 3600, 'minute': 60, 'day': 86400}.get(unit, 3600)
+        return now + offset
+    # absolute: "Jun 28 at 12:50am"
+    m = _RESET_ABS_RE.search(text)
+    if m:
+        month = _MONTH_MAP.get(m.group(1).lower()[:3])
+        if not month:
+            return None
+        day = int(m.group(2))
+        hour = int(m.group(3))
+        minute = int(m.group(4))
+        ampm = m.group(5).lower()
+        if ampm == 'pm' and hour < 12:
+            hour += 12
+        elif ampm == 'am' and hour == 12:
+            hour = 0
+        try:
+            from datetime import datetime
+            dt = datetime.now().replace(
+                month=month, day=day, hour=hour, minute=minute,
+                second=0, microsecond=0)
+        except ValueError:
+            return None
+        return dt.timestamp()
     return None
 
 
@@ -299,16 +330,14 @@ def _parse_claude_limits(text: str) -> dict:
         result["session_used"] = s_used
         result["session_pct"]  = s_left
         result["session_reset"] = s_reset
-        offset = _parse_reset_offset(s_reset)
-        result["session_reset_ts"] = now + offset if offset else None
+        result["session_reset_ts"] = _parse_reset_ts(s_reset)
 
     w_used, w_left, w_reset = parse_window(r'Current\s+week\s*\(all\s+models\)')
     if w_used is not None:
         result["week_used"] = w_used
         result["week_pct"]  = w_left
         result["week_reset"] = w_reset
-        offset = _parse_reset_offset(w_reset)
-        result["week_reset_ts"] = now + offset if offset else None
+        result["week_reset_ts"] = _parse_reset_ts(w_reset)
 
     o_used, o_left, o_reset = parse_window(
         r'Current\s+week\s*\((?:Opus|Sonnet\s+only|Sonnet)\)')
@@ -316,8 +345,7 @@ def _parse_claude_limits(text: str) -> dict:
         result["opus_used"] = o_used
         result["opus_pct"]  = o_left
         result["opus_reset"] = o_reset
-        offset = _parse_reset_offset(o_reset)
-        result["opus_reset_ts"] = now + offset if offset else None
+        result["opus_reset_ts"] = _parse_reset_ts(o_reset)
 
     def parse_stats_block(header_re, stop_re=None):
         m = re.search(header_re + r'\s*[·•]\s*(\d+)\s+requests?\s*[·•]\s*(\d+)\s+sessions?'
