@@ -1157,6 +1157,7 @@ function fmtDate(s){
 }
 
 function switchTab(tab) {
+  __onLimitsPage = false;
   document.getElementById('page-limits').style.display = 'none';
   document.getElementById('page-main').style.display = '';
   __tab = tab;
@@ -1459,9 +1460,7 @@ function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
   if(d.limits != null){__limitsData = d.limits;}
-  const limPage = document.getElementById('page-limits');
-  const isLimits = limPage && limPage.style.display !== 'none';
-  if(isLimits){
+  if(__onLimitsPage){
     renderLimits();
   } else {
     renderTab(__tab);
@@ -1497,8 +1496,10 @@ function setColor(hex){
 
 let __limitsData = null;
 let __limStatTab = '24h';
+let __onLimitsPage = false;
 
 function switchToLimits() {
+  __onLimitsPage = true;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('[data-tab="limits"]').forEach(t => t.classList.add('active'));
   document.getElementById('page-main').style.display = 'none';
@@ -1564,7 +1565,7 @@ function renderLimits() {
     html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-bottom:10px">' + lim.plan + '</div>';
   }
 
-  html += '<div class="lim-title">Limites d\'utilisation</div>';
+  html += '<div class="lim-title">Limites d&#39;utilisation</div>';
 
   if (lim.session_pct != null) {
     html += renderLimBar('session', 'Session courante', lim.session_used, lim.session_pct, lim.session_reset);
@@ -1582,8 +1583,8 @@ function renderLimits() {
     html += '<hr class="lim-divider"><div class="lim-stats-wrap">' +
       '<div class="lim-stats-title">Comportements</div>' +
       '<div class="lim-stat-tabs">' +
-        '<button class="lim-stab' + (__limStatTab==='24h'?' active':'') + '" onclick="setLimTab(\'24h\')">24h</button>' +
-        '<button class="lim-stab' + (__limStatTab==='7d'?' active':'') + '" onclick="setLimTab(\'7d\')">7 jours</button>' +
+        '<button class="lim-stab' + (__limStatTab==='24h'?' active':'') + '" onclick="setLimTab(&#39;24h&#39;)">24h</button>' +
+        '<button class="lim-stab' + (__limStatTab==='7d'?' active':'') + '" onclick="setLimTab(&#39;7d&#39;)">7 jours</button>' +
       '</div>' +
       '<div id="lim-stat-content">' +
         renderStatsBlock(__limStatTab === '24h' ? lim.stats_24h : lim.stats_7d) +
