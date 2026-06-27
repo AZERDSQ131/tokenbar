@@ -2,8 +2,11 @@
 """OpenCode Token Bar — OpenCode + Claude Code + Codex."""
 
 import json
+import os
 import sqlite3
 import re
+import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -59,6 +62,7 @@ _SETTINGS = {}
 
 _cc_cache = {"ts": 0.0, "data": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
+_limits_cache = {"ts": 0.0, "data": None, "fetching": False}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -327,6 +331,139 @@ def _fetch_codex_from_logs(day_ms, week_ms, month_ms, start_ms):
         }
     except Exception:
         return None
+
+
+# ── Claude Limites ─────────────────────────────────────────────────────────────
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\r')
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub('', text)
+
+
+def _parse_claude_limits(text: str) -> dict:
+    text = _strip_ansi(text)
+    result: dict = {
+        "session_pct": None, "session_used": None, "session_reset": None,
+        "week_pct": None, "week_used": None, "week_reset": None,
+        "opus_pct": None, "opus_used": None, "opus_reset": None,
+        "plan": None,
+        "stats_24h": None, "stats_7d": None,
+        "error": None,
+    }
+
+    # Plan line
+    m = re.search(r'(Claude\s+(?:Pro|Max|Team|Enterprise)[^\n]*)', text, re.IGNORECASE)
+    if m:
+        result["plan"] = m.group(1).strip()
+
+    def parse_window(label_pattern):
+        m = re.search(
+            label_pattern + r'[:\s]+(\d+)%\s+(?:used|remaining)[^·\n]*[·•]\s*resets?\s+(.+?)(?:\n|$)',
+            text, re.IGNORECASE)
+        if not m:
+            m = re.search(
+                label_pattern + r'[:\s]+(\d+)%[^·\n]*[·•]\s*resets?\s+(.+?)(?:\n|$)',
+                text, re.IGNORECASE)
+        if m:
+            pct_raw = int(m.group(1))
+            reset = m.group(2).strip().rstrip(')')
+            # "XX% used" → used=XX, left=100-XX ; "XX% remaining" → left=XX, used=100-XX
+            full_match = m.group(0).lower()
+            if 'remaining' in full_match or 'left' in full_match:
+                used = 100 - pct_raw
+                left = pct_raw
+            else:
+                used = pct_raw
+                left = 100 - pct_raw
+            return used, left, reset
+        return None, None, None
+
+    s_used, s_left, s_reset = parse_window(r'Current\s+session')
+    if s_used is not None:
+        result["session_used"] = s_used
+        result["session_pct"]  = s_left
+        result["session_reset"] = s_reset
+
+    w_used, w_left, w_reset = parse_window(r'Current\s+week\s*\(all\s+models\)')
+    if w_used is not None:
+        result["week_used"] = w_used
+        result["week_pct"]  = w_left
+        result["week_reset"] = w_reset
+
+    o_used, o_left, o_reset = parse_window(
+        r'Current\s+week\s*\((?:Opus|Sonnet\s+only|Sonnet)\)')
+    if o_used is not None:
+        result["opus_used"] = o_used
+        result["opus_pct"]  = o_left
+        result["opus_reset"] = o_reset
+
+    def parse_stats_block(header_re, stop_re=None):
+        m = re.search(header_re + r'\s*[·•]\s*(\d+)\s+requests?\s*[·•]\s*(\d+)\s+sessions?'
+                      r'(.*?)(?=' + (stop_re or r'(?:Last \d+[dw]|$)') + r')',
+                      text, re.DOTALL | re.IGNORECASE)
+        if not m:
+            return None
+        body = m.group(3)
+        behaviors = []
+        for bm in re.finditer(r'(\d+)%\s+of your usage came from\s+(.+?)(?:\n|$)', body):
+            behaviors.append({"pct": int(bm.group(1)), "label": bm.group(2).strip()})
+        top_sub = re.search(r'Top\s+subagents?:\s+(.+?)(?:\n|$)', body)
+        top_mcp = re.search(r'Top\s+MCP\s+servers?:\s+(.+?)(?:\n|$)', body)
+        top_ski = re.search(r'Top\s+skills?:\s+(.+?)(?:\n|$)', body)
+        return {
+            "requests": int(m.group(1)),
+            "sessions": int(m.group(2)),
+            "behaviors": behaviors,
+            "top_subagents": top_sub.group(1).strip() if top_sub else None,
+            "top_mcp": top_mcp.group(1).strip() if top_mcp else None,
+            "top_skills": top_ski.group(1).strip() if top_ski else None,
+        }
+
+    result["stats_24h"] = parse_stats_block(r'Last\s+24h', r'Last\s+7d')
+    result["stats_7d"]  = parse_stats_block(r'Last\s+7d')
+
+    if result["session_pct"] is None and result["week_pct"] is None:
+        result["error"] = text[:300].strip() or "Aucune donnée."
+
+    return result
+
+
+def _fetch_limits_impl() -> dict:
+    env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CI": "1"}
+    try:
+        proc = subprocess.run(
+            ["claude", "/usage"],
+            capture_output=True, text=True, timeout=20, env=env,
+        )
+        raw = proc.stdout + proc.stderr
+        data = _parse_claude_limits(raw)
+        return data
+    except FileNotFoundError:
+        return {"error": "claude CLI introuvable."}
+    except subprocess.TimeoutExpired:
+        return {"error": "Timeout — claude /usage a pris trop de temps."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _refresh_limits_bg():
+    if _limits_cache["fetching"]:
+        return
+    _limits_cache["fetching"] = True
+    try:
+        data = _fetch_limits_impl()
+        _limits_cache["ts"] = time.time()
+        _limits_cache["data"] = data
+    finally:
+        _limits_cache["fetching"] = False
+
+
+def fetch_claude_limits_cached():
+    now = time.time()
+    if now - _limits_cache["ts"] > 300:
+        threading.Thread(target=_refresh_limits_bg, daemon=True).start()
+    return _limits_cache["data"]
 
 
 # ── OpenCode ──────────────────────────────────────────────────────────────────
@@ -661,7 +798,10 @@ def fetch():
                     for k in ("i", "o", "cr", "cw")}
                 for d in dates}
 
+    limits = fetch_claude_limits_cached()
+
     return {
+        "limits": limits,
         "all": {
             "today_tok":  oc["today"] + cc["today"] + cx["today"],
             "week_tok":   oc["week"]  + cc["week" ] + cx["week"],
@@ -847,6 +987,38 @@ canvas{display:block;width:100%}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
   font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:center}
 .btn:hover{background:rgba(255,255,255,.08)}
+
+/* ── Limites page ── */
+#page-limits{display:none}
+.lim-section{padding:14px 20px 6px}
+.lim-title{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:rgba(255,255,255,.35);margin-bottom:12px}
+.lim-bar-wrap{margin-bottom:14px}
+.lim-bar-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.lim-bar-label{font-size:13px;font-weight:600;color:rgba(255,255,255,.9)}
+.lim-bar-pct{font-size:22px;font-weight:700;letter-spacing:-.6px;line-height:1}
+.lim-bar-used{font-size:11px;color:rgba(255,255,255,.35);margin-top:1px}
+.lim-track{height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden;margin-bottom:4px}
+.lim-fill{height:100%;border-radius:4px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+.lim-reset{font-size:10px;color:rgba(255,255,255,.3);text-align:right}
+.lim-divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:4px 0 0}
+.lim-stats-wrap{padding:10px 20px 12px}
+.lim-stats-title{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:rgba(255,255,255,.35);margin-bottom:8px}
+.lim-stat-tabs{display:flex;gap:1px;margin-bottom:10px}
+.lim-stab{background:none;border:none;color:rgba(255,255,255,.28);font-family:inherit;
+  font-size:11px;padding:3px 10px;border-radius:5px;cursor:pointer;user-select:none}
+.lim-stab.active{color:rgba(255,255,255,.8);background:rgba(255,255,255,.1)}
+.lim-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;
+  color:rgba(255,255,255,.55)}
+.lim-row b{color:rgba(255,255,255,.85);font-weight:600}
+.lim-beh-item{font-size:11px;color:rgba(255,255,255,.45);padding:2px 0;line-height:1.4}
+.lim-beh-item b{color:rgba(255,255,255,.7);font-weight:600}
+.lim-top{font-size:10.5px;color:rgba(255,255,255,.38);padding:2px 0;line-height:1.4}
+.lim-top span{color:rgba(255,255,255,.6)}
+.lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
+.lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
+.lim-updated{font-size:9.5px;color:rgba(255,255,255,.2);padding:0 20px 8px;text-align:right}
 .btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
@@ -856,6 +1028,7 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
+  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Limites</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -924,6 +1097,26 @@ canvas{display:block;width:100%}
 </div>
 </div>
 
+<div id="page-limits">
+<div class="tabs">
+  <div class="tab"  data-tab="all"         onclick="switchTab('all')">All</div>
+  <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
+  <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
+  <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
+  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Limites</div>
+  <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
+</div>
+
+<div id="lim-body">
+  <div class="lim-loading">Chargement des limites&#x2026;</div>
+</div>
+
+<div class="footer">
+  <button class="btn" onclick="act('refreshLimits')">&#x21BA; Actualiser</button>
+  <button class="btn btn-q" onclick="act('quit')">Quit</button>
+</div>
+</div>
+
 </body></html>
 """
 
@@ -964,10 +1157,15 @@ function fmtDate(s){
 }
 
 function switchTab(tab) {
+  document.getElementById('page-limits').style.display = 'none';
+  document.getElementById('page-main').style.display = '';
   __tab = tab;
   document.querySelectorAll('.tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === tab));
   if (__data) renderTab(tab);
+  requestAnimationFrame(function(){
+    try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
+  });
 }
 
 function renderTab(tab) {
@@ -1260,8 +1458,15 @@ function renderQuota(d, settings) {
 function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
-  renderTab(__tab);
-  renderQuota(d, __settings);
+  if(d.limits != null){__limitsData = d.limits;}
+  const limPage = document.getElementById('page-limits');
+  const isLimits = limPage && limPage.style.display !== 'none';
+  if(isLimits){
+    renderLimits();
+  } else {
+    renderTab(__tab);
+    renderQuota(d, __settings);
+  }
   requestAnimationFrame(function(){
     try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
   });
@@ -1288,6 +1493,119 @@ function setColor(hex){
   act('saveSettings',JSON.stringify(__settings));
 }
 
+// ── Limites ──────────────────────────────────────────────────────────────────
+
+let __limitsData = null;
+let __limStatTab = '24h';
+
+function switchToLimits() {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('[data-tab="limits"]').forEach(t => t.classList.add('active'));
+  document.getElementById('page-main').style.display = 'none';
+  document.getElementById('page-limits').style.display = '';
+  renderLimits();
+  requestAnimationFrame(function(){
+    try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
+  });
+}
+
+function barColor(usedPct) {
+  if (usedPct >= 90) return '#f87171';
+  if (usedPct >= 70) return '#fb923c';
+  return '#4ade80';
+}
+
+function renderLimBar(id, label, usedPct, leftPct, resetStr) {
+  const used = usedPct != null ? usedPct : 0;
+  const left = leftPct != null ? leftPct : (100 - used);
+  const color = barColor(used);
+  return '<div class="lim-bar-wrap">' +
+    '<div class="lim-bar-header">' +
+      '<span class="lim-bar-label">' + label + '</span>' +
+      '<span class="lim-bar-pct" style="color:' + color + '">' + left + '%</span>' +
+    '</div>' +
+    '<div class="lim-bar-used">' + used + '% utilisé</div>' +
+    '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
+    (resetStr ? '<div class="lim-reset">Reset ' + resetStr + '</div>' : '') +
+  '</div>';
+}
+
+function renderStatsBlock(stats) {
+  if (!stats) return '<div style="font-size:11px;color:rgba(255,255,255,.25);padding:4px 0">Aucune donnée.</div>';
+  var html = '<div class="lim-row"><span>Requêtes</span><b>' + stats.requests.toLocaleString() + '</b></div>' +
+             '<div class="lim-row"><span>Sessions</span><b>' + stats.sessions + '</b></div>';
+  if (stats.behaviors && stats.behaviors.length) {
+    html += '<div style="margin-top:6px">';
+    stats.behaviors.forEach(function(b){
+      html += '<div class="lim-beh-item"><b>' + b.pct + '%</b> ' + b.label + '</div>';
+    });
+    html += '</div>';
+  }
+  if (stats.top_subagents) html += '<div class="lim-top">Subagents: <span>' + stats.top_subagents + '</span></div>';
+  if (stats.top_mcp)       html += '<div class="lim-top">MCP: <span>' + stats.top_mcp + '</span></div>';
+  if (stats.top_skills)    html += '<div class="lim-top">Skills: <span>' + stats.top_skills + '</span></div>';
+  return html;
+}
+
+function renderLimits() {
+  const lim = __limitsData;
+  const el = document.getElementById('lim-body');
+  if (!lim) {
+    el.innerHTML = '<div class="lim-loading">Chargement en cours&#x2026;<br><span style="font-size:10px;opacity:.5">Peut prendre ~10s au premier lancement</span></div>';
+    return;
+  }
+  if (lim.error && !lim.session_pct && !lim.week_pct) {
+    el.innerHTML = '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
+    return;
+  }
+
+  var html = '<div class="lim-section">';
+  if (lim.plan) {
+    html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-bottom:10px">' + lim.plan + '</div>';
+  }
+
+  html += '<div class="lim-title">Limites d\'utilisation</div>';
+
+  if (lim.session_pct != null) {
+    html += renderLimBar('session', 'Session courante', lim.session_used, lim.session_pct, lim.session_reset);
+  }
+  if (lim.week_pct != null) {
+    html += renderLimBar('week', 'Semaine (tous modèles)', lim.week_used, lim.week_pct, lim.week_reset);
+  }
+  if (lim.opus_pct != null) {
+    html += renderLimBar('opus', 'Semaine (Opus/Sonnet)', lim.opus_used, lim.opus_pct, lim.opus_reset);
+  }
+
+  html += '</div>';
+
+  if (lim.stats_24h || lim.stats_7d) {
+    html += '<hr class="lim-divider"><div class="lim-stats-wrap">' +
+      '<div class="lim-stats-title">Comportements</div>' +
+      '<div class="lim-stat-tabs">' +
+        '<button class="lim-stab' + (__limStatTab==='24h'?' active':'') + '" onclick="setLimTab(\'24h\')">24h</button>' +
+        '<button class="lim-stab' + (__limStatTab==='7d'?' active':'') + '" onclick="setLimTab(\'7d\')">7 jours</button>' +
+      '</div>' +
+      '<div id="lim-stat-content">' +
+        renderStatsBlock(__limStatTab === '24h' ? lim.stats_24h : lim.stats_7d) +
+      '</div>' +
+    '</div>';
+  }
+
+  html += '</div>';
+
+  el.innerHTML = html;
+}
+
+function setLimTab(t) {
+  __limStatTab = t;
+  document.querySelectorAll('.lim-stab').forEach(function(b){ b.classList.toggle('active', b.textContent.replace(' ','')===t.replace('h','h')); });
+  const stats = __limitsData ? (__limStatTab === '24h' ? __limitsData.stats_24h : __limitsData.stats_7d) : null;
+  const el = document.getElementById('lim-stat-content');
+  if (el) el.innerHTML = renderStatsBlock(stats);
+  document.querySelectorAll('.lim-stab').forEach(function(b){
+    b.classList.toggle('active', (t==='24h' && b.textContent.trim()==='24h') || (t==='7d' && b.textContent.trim()==='7 jours'));
+  });
+}
 
 """
 
@@ -1692,6 +2010,7 @@ class MsgHandler(NSObject):
         elif n == "flex"    and self._app: self._app.flex()
         elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
         elif n == "settings"  and self._app: self._app.show_settings_window()
+        elif n == "refreshLimits" and self._app: self._app.refresh_limits()
 
 
 class NavDelegate(NSObject):
@@ -1724,7 +2043,7 @@ class AppDelegate(NSObject):
 
         cfg = WKWebViewConfiguration.alloc().init()
         uc  = cfg.userContentController()
-        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings"):
+        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings", "refreshLimits"):
             uc.addScriptMessageHandler_name_(self._msg, n)
 
 
@@ -1751,6 +2070,7 @@ class AppDelegate(NSObject):
         self._pop.setAnimates_(True)
         self._pop.setAppearance_(vd)
 
+        threading.Thread(target=_refresh_limits_bg, daemon=True).start()
         self._start_timer()
 
     @objc.python_method
@@ -1923,6 +2243,15 @@ class AppDelegate(NSObject):
                        builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES])
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
+
+    @objc.python_method
+    def refresh_limits(self):
+        _limits_cache["ts"] = 0.0
+        threading.Thread(target=_refresh_limits_bg, daemon=True).start()
+        def _reinject():
+            time.sleep(2)
+            self.inject_data()
+        threading.Thread(target=_reinject, daemon=True).start()
 
     @objc.python_method
     def save_settings_(self, body):
