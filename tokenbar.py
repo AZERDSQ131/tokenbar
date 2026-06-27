@@ -75,7 +75,8 @@ def load_settings():
                   "notify_time": "20:00",
                   "login_start": False,
                   "alerts": [],
-                  "deepseek_api_key": ""}
+                  "deepseek_api_key": "",
+                  "monthly_limit_usd": 0}
     try:
         if SETTINGS_FILE.exists():
             d = json.loads(SETTINGS_FILE.read_text())
@@ -829,6 +830,15 @@ canvas{display:block;width:100%}
 .bd-hit-good{color:#4ade80!important}
 .ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
 .ds-row span{color:rgba(255,255,255,.72)}
+/* quota bar */
+.quota-row{padding:7px 20px 9px;border-top:1px solid rgba(255,255,255,.06)}
+.quota-header{display:flex;justify-content:space-between;font-size:10px;
+  color:rgba(255,255,255,.4);margin-bottom:5px}
+.quota-track{height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden}
+.quota-fill{height:100%;width:0%;border-radius:3px;transition:width .4s,background .4s}
+.quota-footer{display:flex;justify-content:space-between;margin-top:4px;font-size:10px}
+.quota-spent{color:rgba(255,255,255,.65)}
+.quota-proj{color:rgba(255,255,255,.3)}
 /* tooltip élargi pour breakdown */
 #tip{min-width:160px;max-width:220px;line-height:1.5}
 
@@ -895,6 +905,17 @@ canvas{display:block;width:100%}
   </div>
 </div>
 <div id="ds-row" class="ds-row" style="display:none">DeepSeek: <span id="ds-bal">—</span></div>
+
+<div id="quota-row" class="quota-row" style="display:none">
+  <div class="quota-header">
+    <span>Quota mensuel Claude</span><span id="q-pct">—</span>
+  </div>
+  <div class="quota-track"><div class="quota-fill" id="q-bar"></div></div>
+  <div class="quota-footer">
+    <span class="quota-spent"><span id="q-spent">—</span> / <span id="q-limit">—</span></span>
+    <span class="quota-proj">proj. <span id="q-proj">—</span></span>
+  </div>
+</div>
 
 <div class="footer">
   <button class="btn" onclick="act('refresh')">&#x21BA; Refresh</button>
@@ -1212,10 +1233,35 @@ function drawCostChart(daily) {
   makeTip('cv2','tip2',__chartHits2,fmtC,false);
 })();
 
+function renderQuota(d, settings) {
+  const limit = parseFloat(settings.monthly_limit_usd || 0);
+  const row = document.getElementById('quota-row');
+  if (!limit || limit <= 0) { row.style.display = 'none'; return; }
+  const now = new Date();
+  const monthPfx = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  const allDaily = (d.all || {}).daily_cost || [];
+  const costMonth = allDaily.reduce(function(s, e) {
+    return e.date && e.date.startsWith(monthPfx) ? s + (e.cost || 0) : s;
+  }, 0);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const dayOfMonth = now.getDate();
+  const proj = dayOfMonth > 0 ? costMonth / dayOfMonth * daysInMonth : 0;
+  const pct = Math.min(100, Math.round(costMonth / limit * 100));
+  document.getElementById('q-spent').textContent = '$' + costMonth.toFixed(2);
+  document.getElementById('q-limit').textContent = '$' + limit.toFixed(2);
+  document.getElementById('q-pct').textContent   = pct + '%';
+  document.getElementById('q-proj').textContent  = '~$' + proj.toFixed(2);
+  const bar = document.getElementById('q-bar');
+  bar.style.width = pct + '%';
+  bar.style.background = pct >= 90 ? '#f87171' : pct >= 70 ? '#fb923c' : '#4ade80';
+  row.style.display = '';
+}
+
 function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
   renderTab(__tab);
+  renderQuota(d, __settings);
   requestAnimationFrame(function(){
     try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
   });
@@ -1529,6 +1575,18 @@ html,body{width:100%;height:100vh;background:#1c1c1e;color:#fff;
 <hr class="settings-divider">
 
 <div class="settings-section">
+  <div class="settings-label">Quota mensuel Claude ($)</div>
+  <div class="settings-desc">Affiche une barre de progression dans le popover (dépense du mois vs limite). Laisser à 0 pour désactiver.</div>
+  <div class="settings-row">
+    <span style="font-size:11px;color:rgba(255,255,255,.45);margin-right:4px">$</span>
+    <input class="settings-input narrow" id="monthly-limit" type="number" min="0" step="10" placeholder="0" onchange="saveSettings()" style="width:80px">
+    <span style="font-size:10px;color:rgba(255,255,255,.25);margin-left:6px">/ mois</span>
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
   <div class="settings-label">DeepSeek API key</div>
   <div class="settings-desc">Affiche ton solde restant dans le popover.</div>
   <div class="settings-row">
@@ -1554,7 +1612,7 @@ function setColor(hex){SETTINGS.accent_color=hex;act('saveSettings',JSON.stringi
 function collectSettings(){
   var excl=[];document.querySelectorAll('#excl-list .tag').forEach(function(t){var v=t.getAttribute('data-val');if(v)excl.push(v)});
   var alerts=[];document.querySelectorAll('#alert-list .tag').forEach(function(t){try{alerts.push(JSON.parse(t.getAttribute('data-val')))}catch(e){}});
-  return{excluded_models:excl,refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,chart_style:document.getElementById('chart-style').value,chart_period:document.getElementById('chart-period').value,accent_color:SETTINGS.accent_color||'#1c1c1e',notify_enabled:document.getElementById('notify-enabled').checked,notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),login_start:document.getElementById('login-start').checked,alerts:alerts,deepseek_api_key:document.getElementById('ds-key').value}
+  return{excluded_models:excl,refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,chart_style:document.getElementById('chart-style').value,chart_period:document.getElementById('chart-period').value,accent_color:SETTINGS.accent_color||'#1c1c1e',notify_enabled:document.getElementById('notify-enabled').checked,notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),login_start:document.getElementById('login-start').checked,alerts:alerts,deepseek_api_key:document.getElementById('ds-key').value,monthly_limit_usd:parseFloat(document.getElementById('monthly-limit').value)||0}
 }
 function saveSettings(){var s=collectSettings();Object.assign(SETTINGS,s);act('saveSettings',JSON.stringify(s))}
 function addExcl(){
@@ -1613,7 +1671,8 @@ function renderSettings(s){
   if(s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
   document.getElementById('login-start').checked=s.login_start||false;
   document.getElementById('login-start-label').textContent=s.login_start?'On':'Off';
-  document.getElementById('ds-key').value=s.deepseek_api_key||''
+  document.getElementById('ds-key').value=s.deepseek_api_key||'';
+  document.getElementById('monthly-limit').value=s.monthly_limit_usd||''
 }
 renderSettings(SETTINGS);
 </script></body></html>
