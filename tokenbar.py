@@ -403,6 +403,18 @@ def fetch_opencode(day_ms, week_ms, month_ms):
             oc_model_costs_7d = {m: estimate_cost(m, t) for m, t in models_7d.items()}
             oc_model_costs_1m = {m: estimate_cost(m, t) for m, t in models_1m.items()}
 
+        c.execute("""SELECT COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
+                            COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
+                     FROM session WHERE time_archived IS NULL AND time_updated>=?""", (day_ms,))
+        row = c.fetchone() or (0, 0, 0, 0)
+        oc_bd_today = {"input": row[0], "output": row[1], "cache_read": row[2], "cache_write": row[3]}
+
+        c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
+                            COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
+                            COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
+                     FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (month_ms,))
+        oc_daily_bd = {r[0]: {"i": r[1], "o": r[2], "cr": r[3], "cw": r[4]} for r in c.fetchall()}
+
         con.close()
         return {"today": today, "week": week, "total": total,
                 "today_sess": t_sess, "all_sess": a_sess,
@@ -411,13 +423,15 @@ def fetch_opencode(day_ms, week_ms, month_ms):
                 "model_costs": oc_model_costs, "model_costs_1d": oc_model_costs_1d,
                 "model_costs_7d": oc_model_costs_7d, "model_costs_1m": oc_model_costs_1m,
                 "cost_today": cost_today, "cost_all": cost_all, "cost_exact": cost_exact,
-                "daily_cost": daily_cost_raw}
+                "daily_cost": daily_cost_raw,
+                "breakdown_today": oc_bd_today, "daily_breakdown": oc_daily_bd}
     except Exception:
         return {"today": 0, "week": 0, "total": 0,
                 "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
                 "models_1d": {}, "models_7d": {}, "models_1m": {},
                 "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
-                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False, "daily_cost": {}}
+                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False, "daily_cost": {},
+                "breakdown_today": {}, "daily_breakdown": {}}
 
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
@@ -693,6 +707,8 @@ def fetch():
             "cost_today": oc["cost_today"],
             "cost_all":   oc["cost_all"],
             "cost_exact": oc.get("cost_exact", False),
+            "breakdown_today": oc.get("breakdown_today", {}),
+            "daily_breakdown": oc.get("daily_breakdown", {}),
         },
     }
 
