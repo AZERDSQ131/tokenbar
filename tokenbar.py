@@ -647,6 +647,19 @@ def fetch():
         for k, v in src.items():
             all_models_today[k] = all_models_today.get(k, 0) + v
 
+    def merge_bd_today(*srcs):
+        r = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        for s in srcs:
+            for k in r:
+                r[k] += s.get(k, 0)
+        return r
+
+    def merge_daily_bd(*srcs):
+        dates = set().union(*(s.keys() for s in srcs))
+        return {d: {k: sum(s.get(d, {}).get(k, 0) for s in srcs)
+                    for k in ("i", "o", "cr", "cw")}
+                for d in dates}
+
     return {
         "all": {
             "today_tok":  oc["today"] + cc["today"] + cx["today"],
@@ -661,8 +674,10 @@ def fetch():
             "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
             "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
             "cost_exact": False,
-            "breakdown_today": cc.get("breakdown_today", {}),
-            "daily_breakdown": cc.get("daily_breakdown", {}),
+            "breakdown_today": merge_bd_today(cc.get("breakdown_today", {}),
+                                              oc.get("breakdown_today", {})),
+            "daily_breakdown": merge_daily_bd(cc.get("daily_breakdown", {}),
+                                              oc.get("daily_breakdown", {})),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
