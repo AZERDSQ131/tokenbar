@@ -90,7 +90,7 @@ def save_settings(d):
     except: pass
 
 
-def fetch_deepseek_balance_cached() -> dict | None:
+def fetch_deepseek_balance_cached():
     key = _SETTINGS.get("deepseek_api_key", "").strip()
     if not key:
         return None
