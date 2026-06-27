@@ -445,7 +445,7 @@ def fetch_claude_code(day_s, week_s, month_s):
                         o_tok  = usage.get("output_tokens", 0)
                         c_writ = usage.get("cache_creation_input_tokens", 0)
                         c_read = usage.get("cache_read_input_tokens", 0)
-                        tok    = i_tok + o_tok
+                        tok    = i_tok + o_tok + c_read
                         if not tok: continue
                         m = msg.get("model") or "claude"
                         if is_excluded(m): continue
