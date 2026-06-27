@@ -342,18 +342,18 @@ def fetch_opencode(day_ms, week_ms, month_ms):
         def one(q, *a):
             c.execute(q, a); return c.fetchone()[0] or 0
 
-        today  = one("SELECT COALESCE(SUM(tokens_input+tokens_output),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
-        week   = one("SELECT COALESCE(SUM(tokens_input+tokens_output),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", week_ms)
-        total  = one("SELECT COALESCE(SUM(tokens_input+tokens_output),0) FROM session WHERE time_archived IS NULL")
+        today  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
+        week   = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", week_ms)
+        total  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL")
         t_sess = one("SELECT COUNT(*) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
         a_sess = one("SELECT COUNT(*) FROM session WHERE time_archived IS NULL")
 
         c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
-                            COALESCE(SUM(tokens_input+tokens_output),0)
+                            COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (month_ms,))
         daily = {r[0]: r[1] for r in c.fetchall()}
 
-        c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output),0)
+        c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                      GROUP BY model ORDER BY 2 DESC""")
         models = {model_id(r[0]): r[1] for r in c.fetchall()
@@ -375,7 +375,7 @@ def fetch_opencode(day_ms, week_ms, month_ms):
             cost_exact = False
 
         def mq(since):
-            c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output),0)
+            c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
                          FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                          AND time_updated>=? GROUP BY model ORDER BY 2 DESC""", (since,))
             return {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
@@ -770,9 +770,9 @@ canvas{display:block;width:100%}
   font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer;
   user-select:none;letter-spacing:.05em}
 .chart-style-btn:hover{color:rgba(255,255,255,.55)}
-#tip,#tip2{position:absolute;background:rgba(22,22,24,.97);border:1px solid rgba(255,255,255,.13);
-  border-radius:6px;padding:4px 8px;font-size:11px;color:rgba(255,255,255,.88);
-  pointer-events:none;display:none;white-space:nowrap;z-index:10;transform:translateX(-50%)}
+#tip,#tip2{position:fixed;background:rgba(22,22,24,.97);border:1px solid rgba(255,255,255,.13);
+  border-radius:6px;padding:5px 9px;font-size:11px;color:rgba(255,255,255,.88);
+  pointer-events:none;display:none;white-space:nowrap;z-index:100;transform:translateX(-50%)}
 .chart-divider{padding:6px 20px 0;font-size:9px;color:rgba(255,255,255,.22);
   text-transform:uppercase;letter-spacing:.06em}
 
@@ -1168,8 +1168,8 @@ function drawCostChart(daily) {
         }
         tip.style.display='block';
         const th=tip.offsetHeight||22;
-        tip.style.left=(20+hit.cx)+'px';
-        tip.style.top=Math.max(4,8+hit.y-th-4)+'px';
+        tip.style.left=e.clientX+'px';
+        tip.style.top=Math.max(4,e.clientY-th-10)+'px';
       }else{tip.style.display='none';}
     });
     cv.addEventListener('mouseleave',function(){
