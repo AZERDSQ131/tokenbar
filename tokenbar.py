@@ -246,13 +246,13 @@ _RESET_RE = re.compile(r'in\s+(?:about\s+)?(\d+)\s+(hour|minute|day)s?', re.IGNO
 
 def _parse_reset_offset(text):
     if not text:
-        return 0
+        return None
     m = _RESET_RE.search(text)
     if m:
         n = int(m.group(1))
         unit = m.group(2).lower()
         return n * {'hour': 3600, 'minute': 60, 'day': 86400}.get(unit, 3600)
-    return 0
+    return None
 
 
 def _parse_claude_limits(text: str) -> dict:
@@ -299,14 +299,16 @@ def _parse_claude_limits(text: str) -> dict:
         result["session_used"] = s_used
         result["session_pct"]  = s_left
         result["session_reset"] = s_reset
-        result["session_reset_ts"] = now + _parse_reset_offset(s_reset) if s_reset else None
+        offset = _parse_reset_offset(s_reset)
+        result["session_reset_ts"] = now + offset if offset else None
 
     w_used, w_left, w_reset = parse_window(r'Current\s+week\s*\(all\s+models\)')
     if w_used is not None:
         result["week_used"] = w_used
         result["week_pct"]  = w_left
         result["week_reset"] = w_reset
-        result["week_reset_ts"] = now + _parse_reset_offset(w_reset) if w_reset else None
+        offset = _parse_reset_offset(w_reset)
+        result["week_reset_ts"] = now + offset if offset else None
 
     o_used, o_left, o_reset = parse_window(
         r'Current\s+week\s*\((?:Opus|Sonnet\s+only|Sonnet)\)')
@@ -314,7 +316,8 @@ def _parse_claude_limits(text: str) -> dict:
         result["opus_used"] = o_used
         result["opus_pct"]  = o_left
         result["opus_reset"] = o_reset
-        result["opus_reset_ts"] = now + _parse_reset_offset(o_reset) if o_reset else None
+        offset = _parse_reset_offset(o_reset)
+        result["opus_reset_ts"] = now + offset if offset else None
 
     def parse_stats_block(header_re, stop_re=None):
         m = re.search(header_re + r'\s*[·•]\s*(\d+)\s+requests?\s*[·•]\s*(\d+)\s+sessions?'
@@ -1412,8 +1415,8 @@ function renderLimBar(name, usedPct, resetStr, resetTs) {
   '</div>';
 }
 
-function startCountdown(elId, resetTs) {
-  if (!resetTs) return;
+function startCountdown(elId, usedPct, resetTs) {
+  if (usedPct < 100 || !resetTs) return;
   const el = document.getElementById(elId);
   if (!el) return;
   function tick() {
