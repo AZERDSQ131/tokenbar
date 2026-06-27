@@ -6,6 +6,7 @@ import sqlite3
 import re
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -57,6 +58,7 @@ SETTINGS_FILE = Path.home() / ".tokenbar_settings.json"
 _SETTINGS = {}
 
 _cc_cache = {"ts": 0.0, "data": None}
+_ds_balance_cache = {"ts": 0.0, "data": None}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -72,7 +74,8 @@ def load_settings():
                   "notify_enabled": False,
                   "notify_time": "20:00",
                   "login_start": False,
-                  "alerts": []}
+                  "alerts": [],
+                  "deepseek_api_key": ""}
     try:
         if SETTINGS_FILE.exists():
             d = json.loads(SETTINGS_FILE.read_text())
@@ -85,6 +88,28 @@ def save_settings(d):
     try:
         SETTINGS_FILE.write_text(json.dumps(_SETTINGS, indent=2))
     except: pass
+
+
+def fetch_deepseek_balance_cached() -> dict | None:
+    key = _SETTINGS.get("deepseek_api_key", "").strip()
+    if not key:
+        return None
+    now = time.time()
+    if now - _ds_balance_cache["ts"] < 60 and _ds_balance_cache["ts"] > 0:
+        return _ds_balance_cache["data"]
+    try:
+        req = urllib.request.Request(
+            "https://api.deepseek.com/user/balance",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+        _ds_balance_cache["ts"] = now
+        _ds_balance_cache["data"] = data
+        return data
+    except Exception:
+        _ds_balance_cache["ts"] = now
+        return _ds_balance_cache["data"]
 
 LAUNCH_AGENT_DIR = Path.home() / "Library/LaunchAgents"
 LAUNCH_AGENT_PATH = LAUNCH_AGENT_DIR / "com.tokenbar.plist"
@@ -407,13 +432,14 @@ def fetch_claude_code(day_s, week_s, month_s):
         return {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
                 "models_1d": {}, "models_7d": {}, "models_1m": {},
                 "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
-                "cost_today": 0.0, "cost_all": 0.0}
+                "cost_today": 0.0, "cost_all": 0.0, "breakdown_today": {}}
 
     models, models_1d, models_7d, models_1m = {}, {}, {}, {}
     model_costs, model_costs_1d, model_costs_7d, model_costs_1m = {}, {}, {}, {}
     total, today, week = 0, 0, 0
     cost_all, cost_today = 0.0, 0.0
     daily, daily_cost = {}, {}
+    bd_i, bd_o, bd_cr, bd_cw = 0, 0, 0, 0
 
     for jf in CC_DIR.rglob("*.jsonl"):
         try: mtime = jf.stat().st_mtime
@@ -445,7 +471,7 @@ def fetch_claude_code(day_s, week_s, month_s):
                         o_tok  = usage.get("output_tokens", 0)
                         c_writ = usage.get("cache_creation_input_tokens", 0)
                         c_read = usage.get("cache_read_input_tokens", 0)
-                        tok    = i_tok + o_tok + c_read
+                        tok    = i_tok + o_tok + c_read + c_writ
                         if not tok: continue
                         m = msg.get("model") or "claude"
                         if is_excluded(m): continue
@@ -458,6 +484,8 @@ def fetch_claude_code(day_s, week_s, month_s):
                             today += tok; cost_today += est
                             models_1d[m]      = models_1d.get(m, 0) + tok
                             model_costs_1d[m] = model_costs_1d.get(m, 0.0) + est
+                            bd_i += i_tok; bd_o += o_tok
+                            bd_cr += c_read; bd_cw += c_writ
                         if is_week:
                             week += tok
                             models_7d[m]      = models_7d.get(m, 0) + tok
@@ -475,7 +503,9 @@ def fetch_claude_code(day_s, week_s, month_s):
               "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
               "model_costs": model_costs, "model_costs_1d": model_costs_1d,
               "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
-              "cost_today": cost_today, "cost_all": cost_all}
+              "cost_today": cost_today, "cost_all": cost_all,
+              "breakdown_today": {"input": bd_i, "output": bd_o,
+                                  "cache_read": bd_cr, "cache_write": bd_cw}}
     _cc_cache = {"ts": now, "data": result}
     return result
 
@@ -574,6 +604,10 @@ def fetch():
     cc = fetch_claude_code(day_s, week_s, month_s)
     cx = fetch_codex(day_ms, week_ms, month_ms)
 
+    elapsed_h = max(0.5, (time.time() - max(day_s, START_S)) / 3600)
+    tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
+    ds_balance = fetch_deepseek_balance_cached()
+
     def merged_daily(*dicts):
         dates = sorted(set().union(*[d.keys() for d in dicts]))
         return [{"date": d, "tokens": sum(dd.get(d, 0) for dd in dicts)} for d in dates]
@@ -605,6 +639,9 @@ def fetch():
             "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
             "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
             "cost_exact": False,
+            "breakdown_today": cc.get("breakdown_today", {}),
+            "tok_per_hour": tok_per_hour,
+            "ds_balance": ds_balance,
         },
         "claude_code": {
             "today_tok":  cc["today"],
@@ -618,6 +655,8 @@ def fetch():
             "cost_today": cc["cost_today"],
             "cost_all":   cc["cost_all"],
             "cost_exact": False,
+            "breakdown_today": cc.get("breakdown_today", {}),
+            "tok_per_hour": tok_per_hour,
         },
         "codex": {
             "today_tok":  cx["today"],
@@ -733,6 +772,19 @@ canvas{display:block;width:100%}
   text-decoration:underline;text-decoration-color:rgba(255,255,255,.15);text-underline-offset:2px}
 .models-lnk:hover{color:rgba(255,255,255,.55)}
 
+/* breakdown */
+.bd-section{padding:6px 20px 4px;border-top:1px solid rgba(255,255,255,.06)}
+.bd-title{font-size:9px;text-transform:uppercase;letter-spacing:.06em;
+  color:rgba(255,255,255,.22);margin-bottom:6px}
+.bd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.bd-cell .bd-lbl{font-size:10px;color:rgba(255,255,255,.38)}
+.bd-cell .bd-val{font-size:13px;font-weight:600;letter-spacing:-.4px}
+.bd-metrics{display:flex;gap:18px;margin-top:7px;font-size:11px;color:rgba(255,255,255,.4)}
+.bd-metrics b{color:rgba(255,255,255,.82);font-weight:600}
+.bd-hit-good{color:#4ade80!important}
+.ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
+.ds-row span{color:rgba(255,255,255,.72)}
+
 /* footer */
 .footer{border-top:1px solid rgba(255,255,255,.08);display:flex;padding:4px 8px}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
@@ -781,6 +833,21 @@ canvas{display:block;width:100%}
   <div id="s-model">—</div>
   <span class="models-lnk" onclick="act('models')">All models &#x2192;</span>
 </div>
+
+<div id="bd-section" class="bd-section" style="display:none">
+  <div class="bd-title">Today's breakdown</div>
+  <div class="bd-grid">
+    <div class="bd-cell"><div class="bd-lbl">Input</div><div class="bd-val" id="bd-in">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl">Output</div><div class="bd-val" id="bd-out">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl">Cache R</div><div class="bd-val" id="bd-cr">—</div></div>
+    <div class="bd-cell"><div class="bd-lbl">Cache W</div><div class="bd-val" id="bd-cw">—</div></div>
+  </div>
+  <div class="bd-metrics">
+    <span>Cache hit: <b id="bd-hit">—</b></span>
+    <span>Tok/hr: <b id="bd-tph">—</b></span>
+  </div>
+</div>
+<div id="ds-row" class="ds-row" style="display:none">DeepSeek: <span id="ds-bal">—</span></div>
 
 <div class="footer">
   <button class="btn" onclick="act('refresh')">&#x21BA; Refresh</button>
@@ -851,6 +918,45 @@ function renderTab(tab) {
     s.top_model && s.top_model !== '—' ? 'Top model: ' + s.top_model : '';
   drawChart(s.daily || []);
   drawCostChart(s.daily_cost || []);
+
+  // Token breakdown (All + Claude tabs only)
+  const bd = s.breakdown_today;
+  const bdSec = document.getElementById('bd-section');
+  if (bd && (bd.input || bd.output || bd.cache_read || bd.cache_write)) {
+    bdSec.style.display = '';
+    document.getElementById('bd-in').textContent  = fmt(bd.input || 0);
+    document.getElementById('bd-out').textContent = fmt(bd.output || 0);
+    document.getElementById('bd-cr').textContent  = fmt(bd.cache_read || 0);
+    document.getElementById('bd-cw').textContent  = fmt(bd.cache_write || 0);
+    const inputSide = (bd.input || 0) + (bd.cache_read || 0) + (bd.cache_write || 0);
+    const hitPct = inputSide > 0 ? Math.round((bd.cache_read || 0) / inputSide * 100) : 0;
+    const hitEl = document.getElementById('bd-hit');
+    hitEl.textContent = hitPct + '%';
+    hitEl.className = hitPct >= 80 ? 'bd-hit-good' : '';
+    document.getElementById('bd-tph').textContent = s.tok_per_hour ? fmt(s.tok_per_hour) : '—';
+  } else {
+    bdSec.style.display = 'none';
+  }
+
+  // DeepSeek balance (All tab only)
+  const dsRow = document.getElementById('ds-row');
+  if (s.ds_balance) {
+    const infos = s.ds_balance.balance_infos || [];
+    const usd = infos.find(function(x){return x.currency==='USD';});
+    const cny = infos.find(function(x){return x.currency==='CNY';});
+    const info = usd || cny;
+    if (info) {
+      const bal = parseFloat(info.total_balance || 0);
+      const sym = info.currency === 'USD' ? '$' : '¥';
+      document.getElementById('ds-bal').textContent =
+        sym + bal.toFixed(2) + ' (' + info.currency + ')';
+      dsRow.style.display = '';
+    } else {
+      dsRow.style.display = 'none';
+    }
+  } else {
+    dsRow.style.display = 'none';
+  }
 }
 
 function filterByPeriod(daily) {
@@ -1296,6 +1402,16 @@ html,body{width:100%;height:100vh;background:#1c1c1e;color:#fff;
 <hr class="settings-divider">
 
 <div class="settings-section">
+  <div class="settings-label">DeepSeek API key</div>
+  <div class="settings-desc">Affiche ton solde restant dans le popover.</div>
+  <div class="settings-row">
+    <input class="settings-input" id="ds-key" type="password" placeholder="sk-…" onchange="saveSettings()">
+  </div>
+</div>
+
+<hr class="settings-divider">
+
+<div class="settings-section">
   <div class="settings-label">Time filter</div>
   <div class="settings-desc">Reset the start time to include all tokens.</div>
   <button class="sbtn danger" id="reset-btn" onclick="resetStart()">Reset</button>
@@ -1311,7 +1427,7 @@ function setColor(hex){SETTINGS.accent_color=hex;act('saveSettings',JSON.stringi
 function collectSettings(){
   var excl=[];document.querySelectorAll('#excl-list .tag').forEach(function(t){var v=t.getAttribute('data-val');if(v)excl.push(v)});
   var alerts=[];document.querySelectorAll('#alert-list .tag').forEach(function(t){try{alerts.push(JSON.parse(t.getAttribute('data-val')))}catch(e){}});
-  return{excluded_models:excl,refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,chart_style:document.getElementById('chart-style').value,chart_period:document.getElementById('chart-period').value,accent_color:SETTINGS.accent_color||'#1c1c1e',notify_enabled:document.getElementById('notify-enabled').checked,notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),login_start:document.getElementById('login-start').checked,alerts:alerts}
+  return{excluded_models:excl,refresh_interval:parseInt(document.getElementById('refresh-interval').value)||15,chart_style:document.getElementById('chart-style').value,chart_period:document.getElementById('chart-period').value,accent_color:SETTINGS.accent_color||'#1c1c1e',notify_enabled:document.getElementById('notify-enabled').checked,notify_time:(document.getElementById('notify-hour').value.padStart(2,'0')+':'+document.getElementById('notify-min').value.padStart(2,'0')),login_start:document.getElementById('login-start').checked,alerts:alerts,deepseek_api_key:document.getElementById('ds-key').value}
 }
 function saveSettings(){var s=collectSettings();Object.assign(SETTINGS,s);act('saveSettings',JSON.stringify(s))}
 function addExcl(){
@@ -1369,7 +1485,8 @@ function renderSettings(s){
   document.getElementById('notify-enabled-label').textContent=s.notify_enabled?'On':'Off';
   if(s.notify_time){var p=s.notify_time.split(':');if(p.length==2){document.getElementById('notify-hour').value=p[0];document.getElementById('notify-min').value=p[1]}}
   document.getElementById('login-start').checked=s.login_start||false;
-  document.getElementById('login-start-label').textContent=s.login_start?'On':'Off'
+  document.getElementById('login-start-label').textContent=s.login_start?'On':'Off';
+  document.getElementById('ds-key').value=s.deepseek_api_key||''
 }
 renderSettings(SETTINGS);
 </script></body></html>
