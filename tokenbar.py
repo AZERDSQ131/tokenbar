@@ -196,52 +196,33 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
         return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
 
 
+_GH_LOGIN = "AZERDSQ131"
+_GH_CLI   = "/opt/homebrew/bin/gh"
+
 def _fetch_git_heatmap_bg():
     global _git_cache
     _git_cache["fetching"] = True
     try:
-        try:
-            r = subprocess.run(["git", "config", "--global", "user.email"],
-                               capture_output=True, text=True, timeout=2)
-            author = r.stdout.strip() or None
-        except Exception:
-            author = None
-
-        today = datetime.now().date()
-        counts = {}  # date_str -> commit count
-        home = Path.home()
-        search_dirs = [d for d in [home / "Desktop", home / "Documents",
-                                   home / "Projects", home / "dev", home / "code"]
-                       if d.exists()][:4]
-
-        seen = set()
-        for sd in search_dirs:
-            try:
-                res = subprocess.run(
-                    ["find", str(sd), "-maxdepth", "3", "-name", ".git", "-type", "d"],
-                    capture_output=True, text=True, timeout=6)
-                for gd in res.stdout.strip().split("\n"):
-                    if not gd:
-                        continue
-                    repo = str(Path(gd).parent)
-                    if repo in seen:
-                        continue
-                    seen.add(repo)
-                    since = (today - timedelta(days=365)).isoformat()
-                    cmd = ["git", "-C", repo, "log",
-                           f"--since={since}", "--format=%ad", "--date=format:%Y-%m-%d"]
-                    if author:
-                        cmd += [f"--author={author}"]
-                    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                    for ds in r2.stdout.strip().split("\n"):
-                        if ds:
-                            counts[ds] = counts.get(ds, 0) + 1
-            except Exception:
-                pass
+        gql = ('{ user(login: "' + _GH_LOGIN + '") { contributionsCollection {'
+               ' contributionCalendar { weeks { contributionDays {'
+               ' date contributionCount } } } } } }')
+        r = subprocess.run(
+            [_GH_CLI, "api", "graphql", "-f", "query=" + gql],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+        data = json.loads(r.stdout)
+        weeks = (data["data"]["user"]["contributionsCollection"]
+                 ["contributionCalendar"]["weeks"])
+        counts = {}
+        for w in weeks:
+            for day in w["contributionDays"]:
+                if day["contributionCount"]:
+                    counts[day["date"]] = day["contributionCount"]
         _git_cache["heatmap"] = counts
         _git_cache["ts"] = time.time()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[tokenbar] heatmap error: {e}", flush=True)
     finally:
         _git_cache["fetching"] = False
 
@@ -445,10 +426,14 @@ def _parse_claude_limits(text: str) -> dict:
 
 
 def _fetch_limits_impl() -> dict:
+    claude_bin = "/opt/homebrew/bin/claude"
+    if not os.path.exists(claude_bin):
+        import shutil
+        claude_bin = shutil.which("claude") or "claude"
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CI": "1"}
     try:
         proc = subprocess.run(
-            ["claude", "/usage"],
+            [claude_bin, "/usage"],
             capture_output=True, text=True, timeout=45, env=env,
             stdin=subprocess.DEVNULL,
         )
