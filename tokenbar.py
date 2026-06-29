@@ -925,6 +925,12 @@ canvas{display:block;width:100%}
 .lim-bar-sub{display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,.25)}
 .lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
 .lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
+.lim-ds-row{display:flex;justify-content:space-between;align-items:baseline;
+  padding:10px 0 0;border-top:1px solid rgba(255,255,255,.06);margin-top:4px}
+.lim-ds-label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+  color:rgba(255,255,255,.38)}
+.lim-ds-val{font-size:22px;font-weight:700;letter-spacing:-.6px;color:#4ade80}
+.lim-ds-cur{font-size:11px;font-weight:500;color:rgba(255,255,255,.3);margin-left:3px}
 .btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
@@ -1539,6 +1545,21 @@ function renderLimits() {
   if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
   if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
   if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
+  // DeepSeek balance
+  if (__data && __data.all && __data.all.ds_balance) {
+    var infos = __data.all.ds_balance.balance_infos || [];
+    var usd = infos.find(function(x){return x.currency==='USD';});
+    var cny = infos.find(function(x){return x.currency==='CNY';});
+    var info = usd || cny;
+    if (info) {
+      var bal = parseFloat(info.total_balance||0);
+      var sym = info.currency==='USD'?'$':'¥';
+      html += '<div class="lim-ds-row">'
+        +'<span class="lim-ds-label">DeepSeek</span>'
+        +'<span class="lim-ds-val">'+sym+bal.toFixed(4)+' <span class="lim-ds-cur">'+info.currency+'</span></span>'
+        +'</div>';
+    }
+  }
   html += '</div>';
   el.innerHTML = html;
   startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
