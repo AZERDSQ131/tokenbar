@@ -1646,20 +1646,32 @@ function drawContribHeatmap() {
   var heatmap = __gitHeatmap || {};
   var dpr = window.devicePixelRatio || 1;
 
-  var weeks = 5;
-  var cell = 30;
-  var gap = 4;
-  var step = cell + gap;
-  var leftPad = 34;
-  var topPad = 22;
-  var legH = 22;
-  var gridW = weeks * step - gap;
-  var totalW = leftPad + gridW + 4;
-  var H = topPad + 7 * step - gap + legH + 8;
+  // Disposition : 7 colonnes (Lun→Dim) × N lignes (semaines du mois)
+  // → remplit la largeur et forme approximativement un carré
+  var totalW = 312;
+  var step   = Math.floor(totalW / 7);   // 44px
+  var cell   = step - 4;                 // 40px
+  var topPad = 26;  // labels jours
+  var legH   = 24;
 
-  canvas.width = totalW * dpr;
+  var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
+              'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  var joursNom = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+
+  // Bornes du mois courant, alignées sur la semaine (lundi=premier jour)
+  var today = new Date(); today.setHours(0,0,0,0);
+  var firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  var lastOfMonth  = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  var startDow = (firstOfMonth.getDay() + 6) % 7; // 0=lun
+  var endDow   = (lastOfMonth.getDay()  + 6) % 7;
+  var start = new Date(firstOfMonth); start.setDate(start.getDate() - startDow);
+  var end   = new Date(lastOfMonth);  if (endDow < 6) end.setDate(end.getDate() + (6 - endDow));
+  var numWeeks = Math.round((end - start) / 604800000) + 1;
+
+  var H = topPad + numWeeks * step + legH;
+  canvas.width  = totalW * dpr;
   canvas.height = H * dpr;
-  canvas.style.width = totalW + 'px';
+  canvas.style.width  = totalW + 'px';
   canvas.style.height = H + 'px';
   var ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
@@ -1667,48 +1679,48 @@ function drawContribHeatmap() {
   var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
   function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
 
-  var today = new Date(); today.setHours(0,0,0,0);
-  var dayOfWeek = (today.getDay() + 6) % 7;
-  var start = new Date(today);
-  start.setDate(start.getDate() - dayOfWeek - (weeks - 1) * 7);
+  // Labels jours (Lu Ma Me Je Ve Sa Di) centrés sur chaque colonne
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ['Lu','Ma','Me','Je','Ve','Sa','Di'].forEach(function(lbl, i) {
+    ctx.fillText(lbl, i * step + step / 2, 15);
+  });
 
-  var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
-              'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  // Nom du mois en haut à droite
   ctx.font = '11px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,.45)';
-  ctx.fillText(mois[today.getMonth()] + ' ' + today.getFullYear(), leftPad, 14);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.fillText(mois[today.getMonth()] + ' ' + today.getFullYear(), totalW, 15);
 
+  // Grille : row = semaine, col = jour de semaine (0=lun, 6=dim)
   var d = new Date(start);
-  for (var w = 0; w < weeks; w++) {
-    for (var row = 0; row < 7; row++) {
-      if (d <= today) {
-        var ds = d.getFullYear() + '-'
-          + String(d.getMonth()+1).padStart(2,'0') + '-'
-          + String(d.getDate()).padStart(2,'0');
-        var c = heatmap[ds] || 0;
-        ctx.fillStyle = colors[lvl(c)];
-        var x = leftPad + w * step;
-        var y = topPad + row * step;
-        ctx.beginPath();
-        if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 4); }
-        else { ctx.rect(x, y, cell, cell); }
-        ctx.fill();
-      }
+  for (var row = 0; row < numWeeks; row++) {
+    for (var col = 0; col < 7; col++) {
+      var inMonth = d.getMonth() === today.getMonth();
+      var isFuture = d > today;
+      var ds = d.getFullYear() + '-'
+        + String(d.getMonth()+1).padStart(2,'0') + '-'
+        + String(d.getDate()).padStart(2,'0');
+      var c = heatmap[ds] || 0;
+      ctx.fillStyle = (!inMonth || isFuture) ? 'rgba(33,38,45,0.35)' : colors[lvl(c)];
+      var x = col * step;
+      var y = topPad + row * step;
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 4); }
+      else { ctx.rect(x, y, cell, cell); }
+      ctx.fill();
       d.setDate(d.getDate() + 1);
     }
   }
 
+  // Légende Less / More
+  var legY = topPad + numWeeks * step + 16;
+  var legX = totalW - 5 * 16;
   ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,.38)';
-  ['Lun','','Mer','','Ven','',''].forEach(function(lbl, i) {
-    if (lbl) ctx.fillText(lbl, 0, topPad + i * step + cell * 0.72);
-  });
-
-  var legY = topPad + 7 * step - gap + 16;
-  var legX = leftPad + gridW - (5 * 16 - 2);
-  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,.35)';
-  ctx.fillText('Less', legX - 34, legY);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,.32)';
+  ctx.fillText('Less', legX - 4, legY);
   colors.forEach(function(col, i) {
     ctx.fillStyle = col;
     ctx.beginPath();
@@ -1716,50 +1728,41 @@ function drawContribHeatmap() {
     else { ctx.rect(legX + i*16, legY - 11, 12, 12); }
     ctx.fill();
   });
-  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,.32)';
   ctx.fillText('More', legX + 5*16 + 2, legY);
 
-  // Tooltip au survol
+  // Tooltip
   var tip = document.getElementById('contrib-tip');
   if (!tip) {
     tip = document.createElement('div');
     tip.id = 'contrib-tip';
-    tip.style.cssText = 'position:fixed;display:none;background:#1c2128;border:1px solid rgba(255,255,255,.12);'
-      + 'border-radius:6px;padding:6px 10px;font-size:11px;color:rgba(255,255,255,.85);'
-      + 'pointer-events:none;z-index:999;white-space:nowrap;line-height:1.5;'
-      + 'box-shadow:0 4px 12px rgba(0,0,0,.5)';
+    tip.style.cssText = 'position:fixed;display:none;background:#1c2128;'
+      + 'border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:6px 10px;'
+      + 'font-size:11px;color:rgba(255,255,255,.85);pointer-events:none;z-index:999;'
+      + 'white-space:nowrap;line-height:1.5;box-shadow:0 4px 12px rgba(0,0,0,.5)';
     document.body.appendChild(tip);
   }
 
-  var joursNom = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
   canvas.onmousemove = function(e) {
     var rect = canvas.getBoundingClientRect();
     var mx = e.clientX - rect.left;
     var my = e.clientY - rect.top;
-    var col = Math.floor((mx - leftPad) / step);
+    var col = Math.floor(mx / step);
     var row = Math.floor((my - topPad) / step);
-    if (col < 0 || col >= weeks || row < 0 || row >= 7) { tip.style.display='none'; return; }
-    var cx = leftPad + col * step;
-    var cy = topPad + row * step;
-    if (mx < cx || mx > cx + cell || my < cy || my > cy + cell) { tip.style.display='none'; return; }
-    var dd = new Date(start);
-    dd.setDate(dd.getDate() + col * 7 + row);
-    if (dd > today) { tip.style.display='none'; return; }
+    if (col < 0 || col >= 7 || row < 0 || row >= numWeeks) { tip.style.display='none'; return; }
+    if (mx < col*step || mx > col*step+cell || my < topPad+row*step || my > topPad+row*step+cell) { tip.style.display='none'; return; }
+    var dd = new Date(start); dd.setDate(dd.getDate() + row*7 + col);
+    if (dd > today || dd.getMonth() !== today.getMonth()) { tip.style.display='none'; return; }
     var ds = dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0');
     var cnt = heatmap[ds] || 0;
-    var label = cnt === 0 ? 'Aucune contribution'
-      : cnt === 1 ? '1 contribution'
-      : cnt + ' contributions';
-    var dayName = joursNom[dd.getDay()];
-    var dateStr = dayName + ' ' + dd.getDate() + ' ' + mois[dd.getMonth()];
+    var label = cnt === 0 ? 'Aucune contribution' : cnt === 1 ? '1 contribution' : cnt + ' contributions';
+    var dateStr = joursNom[dd.getDay()] + ' ' + dd.getDate() + ' ' + mois[dd.getMonth()];
     tip.innerHTML = '<strong>' + label + '</strong><br><span style="opacity:.55">' + dateStr + '</span>';
-    var tx = e.clientX + 10;
-    var ty = e.clientY - 40;
+    var tx = e.clientX + 10, ty = e.clientY - 40;
     if (tx + 160 > window.innerWidth) tx = e.clientX - 170;
     if (ty < 0) ty = e.clientY + 14;
-    tip.style.left = tx + 'px';
-    tip.style.top  = ty + 'px';
-    tip.style.display = 'block';
+    tip.style.left = tx + 'px'; tip.style.top = ty + 'px'; tip.style.display = 'block';
   };
   canvas.onmouseleave = function() { tip.style.display = 'none'; };
 }
