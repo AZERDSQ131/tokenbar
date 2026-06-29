@@ -1760,7 +1760,7 @@ function renderUsageSummary() {
   ];
   var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
     + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd\'hui</div>';
+    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd&#39;hui</div>';
   rows.forEach(function(r) {
     var s = __data[r.key];
     if (!s || !s.today_tok) return;
