@@ -877,19 +877,19 @@ canvas{display:block;width:100%}
 .models-lnk:hover{color:rgba(255,255,255,.55)}
 
 /* breakdown */
-.bd-section{padding:6px 20px 4px;border-top:1px solid rgba(255,255,255,.06)}
-.bd-title{font-size:9px;text-transform:uppercase;letter-spacing:.06em;
-  color:rgba(255,255,255,.22);margin-bottom:6px}
-.bd-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
-.bd-cell .bd-lbl{font-size:10px;color:rgba(255,255,255,.38)}
-.bd-cell .bd-val{font-size:13px;font-weight:600;letter-spacing:-.4px}
-#bd-in{color:#60a5fa}
-#bd-out{color:#34d399}
-#bd-cr{color:#fbbf24}
-#bd-cw{color:#a78bfa}
-.bd-metrics{display:flex;gap:18px;margin-top:7px;font-size:11px;color:rgba(255,255,255,.4)}
-.bd-metrics b{color:rgba(255,255,255,.82);font-weight:600}
-.bd-hit-good{color:#4ade80!important}
+.perf-section{padding:8px 16px 6px;border-top:1px solid rgba(255,255,255,.06)}
+.perf-title{font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+  color:rgba(255,255,255,.2);margin-bottom:7px}
+.perf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.perf-cell{background:rgba(255,255,255,.04);border-radius:7px;padding:6px 9px}
+.perf-lbl{font-size:9px;color:rgba(255,255,255,.3);margin-bottom:2px;letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-val{font-size:15px;font-weight:700;letter-spacing:-.5px;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-sub{font-size:9px;color:rgba(255,255,255,.18);margin-top:1px}
+.perf-up{color:#4ade80}
+.perf-dn{color:#f87171}
+.perf-neu{color:rgba(255,255,255,.7)}
 .ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
 .ds-row span{color:rgba(255,255,255,.72)}
 /* quota bar */
@@ -969,18 +969,39 @@ canvas{display:block;width:100%}
   <span class="models-lnk" onclick="act('models')">All models &#x2192;</span>
 </div>
 
-<div id="bd-section" class="bd-section" style="display:none">
-  <div class="bd-title">Today's breakdown</div>
-  <div class="bd-grid">
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#60a5fa">●</span> Input</div><div class="bd-val" id="bd-in">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#34d399">●</span> Output</div><div class="bd-val" id="bd-out">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#f472b6">●</span> Reasoning</div><div class="bd-val" id="bd-r">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#fbbf24">●</span> Cache R</div><div class="bd-val" id="bd-cr">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#a78bfa">●</span> Cache W</div><div class="bd-val" id="bd-cw">—</div></div>
-  </div>
-  <div class="bd-metrics">
-    <span>Cache hit: <b id="bd-hit">—</b></span>
-    <span>Tok/hr: <b id="bd-tph">—</b></span>
+<div id="perf-section" class="perf-section" style="display:none">
+  <div class="perf-title">Vitesse &amp; efficacité</div>
+  <div class="perf-grid">
+    <div class="perf-cell">
+      <div class="perf-lbl">Rythme</div>
+      <div class="perf-val perf-neu" id="pf-tph">—</div>
+      <div class="perf-sub">tok / hr</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Cache hit</div>
+      <div class="perf-val" id="pf-hit">—</div>
+      <div class="perf-sub">% lectures</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Coût / 1M</div>
+      <div class="perf-val perf-neu" id="pf-rate">—</div>
+      <div class="perf-sub">taux effectif</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">vs moy. 7j</div>
+      <div class="perf-val" id="pf-vs7">—</div>
+      <div class="perf-sub">comparaison</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Projection</div>
+      <div class="perf-val perf-neu" id="pf-proj">—</div>
+      <div class="perf-sub">fin de jour</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Top modèle</div>
+      <div class="perf-val perf-neu" id="pf-model">—</div>
+      <div class="perf-sub">aujourd'hui</div>
+    </div>
   </div>
 </div>
 <div id="ds-row" class="ds-row" style="display:none">DeepSeek: <span id="ds-bal">—</span></div>
@@ -1104,24 +1125,52 @@ function renderTab(tab) {
   drawChart(s.daily || []);
   drawCostChart(s.daily_cost || []);
 
-  // Token breakdown (All + Claude tabs only)
+  // Vitesse & efficacité
   const bd = s.breakdown_today;
-  const bdSec = document.getElementById('bd-section');
-  if (bd && (bd.input || bd.output || bd.cache_read || bd.cache_write)) {
-    bdSec.style.display = '';
-    document.getElementById('bd-in').textContent  = fmt(bd.input || 0);
-    document.getElementById('bd-out').textContent = fmt(bd.output || 0);
-    document.getElementById('bd-r').textContent   = fmt(bd.reasoning || 0);
-    document.getElementById('bd-cr').textContent  = fmt(bd.cache_read || 0);
-    document.getElementById('bd-cw').textContent  = fmt(bd.cache_write || 0);
-    const inputSide = (bd.input || 0) + (bd.cache_read || 0) + (bd.cache_write || 0);
-    const hitPct = inputSide > 0 ? Math.round((bd.cache_read || 0) / inputSide * 100) : 0;
-    const hitEl = document.getElementById('bd-hit');
-    hitEl.textContent = hitPct + '%';
-    hitEl.className = hitPct >= 80 ? 'bd-hit-good' : '';
-    document.getElementById('bd-tph').textContent = s.tok_per_hour ? fmt(s.tok_per_hour) : '—';
+  const perfSec = document.getElementById('perf-section');
+  if (s.today_tok > 0) {
+    perfSec.style.display = '';
+    // Rythme
+    document.getElementById('pf-tph').textContent = s.tok_per_hour ? fmt(s.tok_per_hour) : '—';
+    // Cache hit
+    const hitEl = document.getElementById('pf-hit');
+    if (bd && (bd.input || bd.cache_read)) {
+      const inputSide = (bd.input||0)+(bd.cache_read||0)+(bd.cache_write||0);
+      const hitPct = inputSide>0 ? Math.round((bd.cache_read||0)/inputSide*100) : 0;
+      hitEl.textContent = hitPct+'%';
+      hitEl.className = 'perf-val '+(hitPct>=80?'perf-up':hitPct>=50?'perf-neu':'perf-dn');
+    } else { hitEl.textContent='—'; hitEl.className='perf-val perf-neu'; }
+    // Coût / 1M tokens
+    const rateEl = document.getElementById('pf-rate');
+    if (s.cost_today>0 && s.today_tok>0) {
+      rateEl.textContent = '$'+(s.cost_today/s.today_tok*1e6).toFixed(2);
+    } else { rateEl.textContent='—'; }
+    // vs moy. 7j
+    const vs7El = document.getElementById('pf-vs7');
+    const daily7 = (s.daily||[]).slice(-7);
+    if (daily7.length>=2) {
+      const avg7 = daily7.slice(0,-1).reduce(function(a,d){return a+(d.tokens||0);},0)/(daily7.length-1||1);
+      if (avg7>0) {
+        const ratio = (s.today_tok/avg7-1)*100;
+        const sign = ratio>=0?'+':'';
+        vs7El.textContent = sign+Math.round(ratio)+'%';
+        vs7El.className = 'perf-val '+(ratio>=10?'perf-up':ratio<=-10?'perf-dn':'perf-neu');
+      } else { vs7El.textContent='—'; vs7El.className='perf-val perf-neu'; }
+    } else { vs7El.textContent='—'; vs7El.className='perf-val perf-neu'; }
+    // Projection fin de jour
+    const projEl = document.getElementById('pf-proj');
+    const elH=(Date.now()-new Date().setHours(0,0,0,0))/3600000;
+    if (s.cost_today>0 && elH>0.08) {
+      const proj = s.cost_today/elH*24;
+      projEl.textContent = '$'+proj.toFixed(2);
+    } else { projEl.textContent='—'; }
+    // Top modèle
+    const modelEl = document.getElementById('pf-model');
+    const mName = (s.top_model_today||s.top_model||'—');
+    const mShort = mName.replace(/^claude-/,'').replace(/-(202\d.*)$/,'').replace(/-/g,' ');
+    modelEl.textContent = mShort.length>12 ? mShort.slice(0,11)+'…' : mShort;
   } else {
-    bdSec.style.display = 'none';
+    perfSec.style.display = 'none';
   }
 
   // DeepSeek balance (All tab only)
