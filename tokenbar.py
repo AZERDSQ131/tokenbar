@@ -28,7 +28,9 @@ from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL, NSNotificationCenter
 
 OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
+OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
 CC_DIR      = Path.home() / ".claude/projects"
+CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
 OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
 
 W, H   = 340, 320
@@ -456,13 +458,12 @@ def fetch_opencode_workflow_tokens():
         return {}
 
 
-def fetch_opencode(day_ms, week_ms, month_ms):
-    if not OC_DB.exists():
-        return {"today": 0, "week": 0, "total": 0,
-                "today_sess": 0, "all_sess": 0,
-                "daily": {}, "models": {}}
+def _oc_read_db(db_path, day_ms, week_ms, month_ms):
+    """Read a single OpenCode DB and return raw aggregates."""
+    if not db_path.exists():
+        return None
     try:
-        con = sqlite3.connect(f"file:{OC_DB}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         c = con.cursor()
 
         def one(q, *a):
@@ -482,8 +483,11 @@ def fetch_opencode(day_ms, week_ms, month_ms):
         c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                      GROUP BY model ORDER BY 2 DESC""")
-        models = {model_id(r[0]): r[1] for r in c.fetchall()
-                  if not is_excluded(model_id(r[0]))}
+        models = {}
+        for r in c.fetchall():
+            mid = model_id(r[0])
+            if is_excluded(mid): continue
+            models[mid] = models.get(mid, 0) + r[1]
 
         cost_today = one("SELECT COALESCE(SUM(cost),0.0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
         cost_all   = one("SELECT COALESCE(SUM(cost),0.0) FROM session WHERE time_archived IS NULL")
@@ -492,22 +496,12 @@ def fetch_opencode(day_ms, week_ms, month_ms):
                      FROM session WHERE time_archived IS NULL AND time_updated>=?
                      GROUP BY 1""", (month_ms,))
         daily_cost_raw = {r[0]: r[1] for r in c.fetchall()}
-        cost_exact = True
-        # Fallback si OpenCode ne peuple pas la colonne cost
-        if cost_all == 0 and total > 0:
-            cost_all   = sum(estimate_cost(m, t) for m, t in models.items())
-            cost_today = cost_all * today / total if total > 0 else 0.0
-            daily_cost_raw = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
-            cost_exact = False
 
         def mq(since):
             c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0)
                          FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                          AND time_updated>=? GROUP BY model ORDER BY 2 DESC""", (since,))
             return {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
-        models_1d = mq(day_ms)
-        models_7d = mq(week_ms)
-        models_1m = mq(month_ms)
 
         def mcq(since):
             c.execute("""SELECT model, COALESCE(SUM(cost),0.0)
@@ -518,71 +512,202 @@ def fetch_opencode(day_ms, week_ms, month_ms):
         c.execute("""SELECT model, COALESCE(SUM(cost),0.0)
                      FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                      GROUP BY model""")
-        oc_model_costs     = {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
-        oc_model_costs_1d  = mcq(day_ms)
-        oc_model_costs_7d  = mcq(week_ms)
-        oc_model_costs_1m  = mcq(month_ms)
-
-        if not cost_exact:
-            oc_model_costs    = {m: estimate_cost(m, t) for m, t in models.items()}
-            oc_model_costs_1d = {m: estimate_cost(m, t) for m, t in models_1d.items()}
-            oc_model_costs_7d = {m: estimate_cost(m, t) for m, t in models_7d.items()}
-            oc_model_costs_1m = {m: estimate_cost(m, t) for m, t in models_1m.items()}
+        model_costs = {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
 
         c.execute("""SELECT COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
                             COALESCE(SUM(tokens_reasoning),0),
                             COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND time_updated>=?""", (day_ms,))
         row = c.fetchone() or (0, 0, 0, 0, 0)
-        oc_bd_today = {"input": row[0], "output": row[1], "reasoning": row[2], "cache_read": row[3], "cache_write": row[4]}
+        bd_today = {"input": row[0], "output": row[1], "reasoning": row[2], "cache_read": row[3], "cache_write": row[4]}
 
         c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
                             COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
                             COALESCE(SUM(tokens_reasoning),0),
                             COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (month_ms,))
-        oc_daily_bd = {r[0]: {"i": r[1], "o": r[2], "r": r[3], "cr": r[4], "cw": r[5]} for r in c.fetchall()}
+        daily_bd = {r[0]: {"i": r[1], "o": r[2], "r": r[3], "cr": r[4], "cw": r[5]} for r in c.fetchall()}
 
+        result = {
+            "today": today, "week": week, "total": total,
+            "today_sess": t_sess, "all_sess": a_sess,
+            "daily": daily, "models": models,
+            "models_1d": mq(day_ms), "models_7d": mq(week_ms), "models_1m": mq(month_ms),
+            "model_costs": model_costs,
+            "model_costs_1d": mcq(day_ms), "model_costs_7d": mcq(week_ms), "model_costs_1m": mcq(month_ms),
+            "cost_today": cost_today, "cost_all": cost_all,
+            "daily_cost": daily_cost_raw,
+            "breakdown_today": bd_today, "daily_breakdown": daily_bd,
+        }
         con.close()
-
-        # Include tokens from workflow agent sessions not yet in the DB
-        wf_tokens = fetch_opencode_workflow_tokens()
-        today_date = datetime.now().strftime("%Y-%m-%d")
-        if wf_tokens:
-            wf_total = sum(w["total"] for w in wf_tokens.values())
-            total += wf_total
-            week   += wf_total
-            for wf_id, wf_data in wf_tokens.items():
-                wf_day = datetime.fromtimestamp(wf_data["created_ms"] / 1000).strftime("%Y-%m-%d")
-                daily[wf_day] = daily.get(wf_day, 0) + wf_data["total"]
-                if wf_day == today_date:
-                    today += wf_data["total"]
-                # Estimate cost for workflow tokens (deepseek-v4-flash rate)
-                wf_cost = wf_data["total"] * 0.18 / 1_000_000
-                daily_cost_raw[wf_day] = daily_cost_raw.get(wf_day, 0.0) + wf_cost
-                cost_all += wf_cost
-                if wf_day == today_date:
-                    cost_today += wf_cost
-            models["deepseek-v4-flash"] = models.get("deepseek-v4-flash", 0) + wf_total
-            models_1d["deepseek-v4-flash"] = models_1d.get("deepseek-v4-flash", 0) + wf_total
-            models_7d["deepseek-v4-flash"] = models_7d.get("deepseek-v4-flash", 0) + wf_total
-            models_1m["deepseek-v4-flash"] = models_1m.get("deepseek-v4-flash", 0) + wf_total
-
-        return {"today": today, "week": week, "total": total,
-                "today_sess": t_sess, "all_sess": a_sess,
-                "daily": daily, "models": models,
-                "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
-                "model_costs": oc_model_costs, "model_costs_1d": oc_model_costs_1d,
-                "model_costs_7d": oc_model_costs_7d, "model_costs_1m": oc_model_costs_1m,
-                "cost_today": cost_today, "cost_all": cost_all, "cost_exact": cost_exact,
-                "daily_cost": daily_cost_raw,
-                "breakdown_today": oc_bd_today, "daily_breakdown": oc_daily_bd}
+        return result
     except Exception:
+        return None
+
+
+def fetch_opencode(day_ms, week_ms, month_ms):
+    # Read both DBs (stable + dev) and merge
+    stable = _oc_read_db(OC_DB, day_ms, week_ms, month_ms)
+    dev    = _oc_read_db(OC_DB_DEV, day_ms, week_ms, month_ms)
+
+    if stable is None and dev is None:
         return {"today": 0, "week": 0, "total": 0,
                 "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
                 "models_1d": {}, "models_7d": {}, "models_1m": {},
                 "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
                 "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False, "daily_cost": {},
+                "breakdown_today": {}, "daily_breakdown": {}}
+
+    # Use whichever DB is available
+    d = dev if dev is not None else stable
+
+    # Merge the second DB if present
+    other = stable if dev is not None and stable is not None else None
+    if other is not None:
+        d["today"]      += other["today"]
+        d["week"]       += other["week"]
+        d["total"]      += other["total"]
+        d["today_sess"] += other["today_sess"]
+        d["all_sess"]   += other["all_sess"]
+        for k, v in other["daily"].items():
+            d["daily"][k] = d["daily"].get(k, 0) + v
+        for k, v in other["models"].items():
+            d["models"][k] = d["models"].get(k, 0) + v
+        for key in ("models_1d", "models_7d", "models_1m"):
+            for k, v in other[key].items():
+                d[key][k] = d[key].get(k, 0) + v
+        for key in ("model_costs", "model_costs_1d", "model_costs_7d", "model_costs_1m"):
+            for k, v in other[key].items():
+                d[key][k] = d[key].get(k, 0.0) + v
+        d["cost_today"] += other["cost_today"]
+        d["cost_all"]   += other["cost_all"]
+        for k, v in other["daily_cost"].items():
+            d["daily_cost"][k] = d["daily_cost"].get(k, 0.0) + v
+        for k in d["breakdown_today"]:
+            d["breakdown_today"][k] += other["breakdown_today"].get(k, 0)
+        for day_key, bd in other["daily_breakdown"].items():
+            if day_key not in d["daily_breakdown"]:
+                d["daily_breakdown"][day_key] = bd
+            else:
+                for k in bd:
+                    d["daily_breakdown"][day_key][k] = d["daily_breakdown"][day_key].get(k, 0) + bd[k]
+
+    cost_exact = True
+    if d["cost_all"] == 0 and d["total"] > 0:
+        d["cost_all"]   = sum(estimate_cost(m, t) for m, t in d["models"].items())
+        d["cost_today"] = d["cost_all"] * d["today"] / d["total"] if d["total"] > 0 else 0.0
+        d["daily_cost"] = {day: d["cost_all"] * t / d["total"] for day, t in d["daily"].items()} if d["total"] > 0 else {}
+        for key in ("model_costs", "model_costs_1d", "model_costs_7d", "model_costs_1m"):
+            src = {1: "models_1d", 7: "models_7d", 30: "models_1m"}.get(
+                {"model_costs": 0, "model_costs_1d": 1, "model_costs_7d": 7, "model_costs_1m": 30}[key], "models")
+            src_dict = d[src] if src == "models" else d[src]
+            d[key] = {m: estimate_cost(m, t) for m, t in src_dict.items()}
+        cost_exact = False
+
+    d["cost_exact"] = cost_exact
+
+    # Include tokens from workflow agent sessions not yet in the DB
+    wf_tokens = fetch_opencode_workflow_tokens()
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    if wf_tokens:
+        wf_total = sum(w["total"] for w in wf_tokens.values())
+        d["total"] += wf_total
+        d["week"]  += wf_total
+        for wf_id, wf_data in wf_tokens.items():
+            wf_day = datetime.fromtimestamp(wf_data["created_ms"] / 1000).strftime("%Y-%m-%d")
+            d["daily"][wf_day] = d["daily"].get(wf_day, 0) + wf_data["total"]
+            if wf_day == today_date:
+                d["today"] += wf_data["total"]
+            wf_cost = wf_data["total"] * 0.18 / 1_000_000
+            d["daily_cost"][wf_day] = d["daily_cost"].get(wf_day, 0.0) + wf_cost
+            d["cost_all"] += wf_cost
+            if wf_day == today_date:
+                d["cost_today"] += wf_cost
+        d["models"]["deepseek-v4-flash"] = d["models"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_1d"]["deepseek-v4-flash"] = d["models_1d"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_7d"]["deepseek-v4-flash"] = d["models_7d"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_1m"]["deepseek-v4-flash"] = d["models_1m"].get("deepseek-v4-flash", 0) + wf_total
+
+    return d
+
+
+# ── Codex ────────────────────────────────────────────────────────────────────
+
+def fetch_codex(day_ms, week_ms, month_ms):
+    if not CODEX_DB.exists():
+        return {"today": 0, "week": 0, "total": 0,
+                "today_sess": 0, "all_sess": 0,
+                "daily": {}, "models": {},
+                "models_1d": {}, "models_7d": {}, "models_1m": {},
+                "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False,
+                "daily_cost": {},
+                "breakdown_today": {}, "daily_breakdown": {}}
+    try:
+        con = sqlite3.connect(f"file:{CODEX_DB}?mode=ro", uri=True)
+        c = con.cursor()
+
+        def one(q, *a):
+            c.execute(q, a); return c.fetchone()[0] or 0
+
+        today  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
+        week   = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", week_ms)
+        total  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0")
+        t_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
+        a_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0")
+
+        c.execute("""SELECT date(updated_at_ms/1000,'unixepoch','localtime'),
+                            COALESCE(SUM(tokens_used),0)
+                     FROM threads WHERE archived=0 AND updated_at_ms>=? GROUP BY 1""", (month_ms,))
+        daily = {r[0]: r[1] for r in c.fetchall()}
+
+        c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
+                     FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                     GROUP BY model ORDER BY 2 DESC""")
+        models = {}
+        for r in c.fetchall():
+            m = r[0]
+            if is_excluded(m): continue
+            models[m] = models.get(m, 0) + r[1]
+
+        # Codex does not store cost in the DB — estimate from BLENDED_RATES / CLAUDE_PRICING
+        cost_all   = sum(estimate_cost(m, t) for m, t in models.items())
+        cost_today = cost_all * today / total if total > 0 else 0.0
+        daily_cost = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
+
+        def mq(since):
+            c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
+                         FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                         AND updated_at_ms>=? GROUP BY model ORDER BY 2 DESC""", (since,))
+            return {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
+
+        models_1d = mq(day_ms)
+        models_7d = mq(week_ms)
+        models_1m = mq(month_ms)
+
+        model_costs    = {m: estimate_cost(m, t) for m, t in models.items()}
+        model_costs_1d = {m: estimate_cost(m, t) for m, t in models_1d.items()}
+        model_costs_7d = {m: estimate_cost(m, t) for m, t in models_7d.items()}
+        model_costs_1m = {m: estimate_cost(m, t) for m, t in models_1m.items()}
+
+        con.close()
+
+        return {"today": today, "week": week, "total": total,
+                "today_sess": t_sess, "all_sess": a_sess,
+                "daily": daily, "models": models,
+                "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
+                "model_costs": model_costs, "model_costs_1d": model_costs_1d,
+                "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
+                "cost_today": cost_today, "cost_all": cost_all, "cost_exact": False,
+                "daily_cost": daily_cost,
+                "breakdown_today": {}, "daily_breakdown": {}}
+    except Exception:
+        return {"today": 0, "week": 0, "total": 0,
+                "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
+                "models_1d": {}, "models_7d": {}, "models_1m": {},
+                "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False,
+                "daily_cost": {},
                 "breakdown_today": {}, "daily_breakdown": {}}
 
 
@@ -701,6 +826,7 @@ def fetch():
 
     oc = fetch_opencode(day_ms, week_ms, month_ms)
     cc = fetch_claude_code(day_s, week_s, month_s)
+    cx = fetch_codex(day_ms, week_ms, month_ms)
 
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
@@ -716,10 +842,10 @@ def fetch():
 
     all_models      = {}
     all_models_today = {}
-    for src in (oc["models"], cc["models"]):
+    for src in (oc["models"], cc["models"], cx["models"]):
         for k, v in src.items():
             all_models[k] = all_models.get(k, 0) + v
-    for src in (oc.get("models_1d", {}), cc.get("models_1d", {})):
+    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {})):
         for k, v in src.items():
             all_models_today[k] = all_models_today.get(k, 0) + v
 
@@ -741,22 +867,24 @@ def fetch():
     return {
         "limits": limits,
         "all": {
-            "today_tok":  oc["today"] + cc["today"],
-            "week_tok":   oc["week"]  + cc["week"],
-            "all_tok":    oc["total"] + cc["total"],
+            "today_tok":  oc["today"] + cc["today"] + cx["today"],
+            "week_tok":   oc["week"]  + cc["week"]  + cx["week"],
+            "all_tok":    oc["total"] + cc["total"] + cx["total"],
             "today_sess": None,
             "all_sess":   None,
             "top_model":  _top(all_models),
             "top_model_today": _top(all_models_today),
-            "daily":      merged_daily(oc["daily"], cc["daily"]),
-            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"]),
-            "cost_today": oc["cost_today"] + cc["cost_today"],
-            "cost_all":   oc["cost_all"]   + cc["cost_all"],
+            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"]),
+            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"]),
+            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
+            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
             "cost_exact": False,
             "breakdown_today": merge_bd_today(cc.get("breakdown_today", {}),
-                                              oc.get("breakdown_today", {})),
+                                              oc.get("breakdown_today", {}),
+                                              cx.get("breakdown_today", {})),
             "daily_breakdown": merge_daily_bd(cc.get("daily_breakdown", {}),
-                                              oc.get("daily_breakdown", {})),
+                                              oc.get("daily_breakdown", {}),
+                                              cx.get("daily_breakdown", {})),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
@@ -791,6 +919,21 @@ def fetch():
             "breakdown_today": oc.get("breakdown_today", {}),
             "daily_breakdown": oc.get("daily_breakdown", {}),
         },
+        "codex": {
+            "today_tok":  cx["today"],
+            "week_tok":   cx["week"],
+            "all_tok":    cx["total"],
+            "today_sess": cx["today_sess"],
+            "all_sess":   cx["all_sess"],
+            "top_model":  _top(cx["models"]),
+            "daily":      daily_list(cx["daily"]),
+            "daily_cost": daily_cost_list(cx["daily_cost"]),
+            "cost_today": cx["cost_today"],
+            "cost_all":   cx["cost_all"],
+            "cost_exact": cx.get("cost_exact", False),
+            "breakdown_today": cx.get("breakdown_today", {}),
+            "daily_breakdown": cx.get("daily_breakdown", {}),
+        },
     }
 
 
@@ -805,8 +948,9 @@ def fetch_all_models():
 
     oc = fetch_opencode(day_ms, week_ms, month_ms)
     cc = fetch_claude_code(day_s, week_s, month_s)
+    cx = fetch_codex(day_ms, week_ms, month_ms)
 
-    def make_rows(oc_m, oc_mc, cc_m, cc_mc):
+    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc):
         rows = []
         for name, tok in oc_m.items():
             cost = oc_mc.get(name, estimate_cost(name, tok))
@@ -814,13 +958,16 @@ def fetch_all_models():
         for name, tok in cc_m.items():
             cost = cc_mc.get(name, estimate_cost(name, tok))
             rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Claude Code"})
+        for name, tok in cx_m.items():
+            cost = cx_mc.get(name, estimate_cost(name, tok))
+            rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Codex"})
         return sorted(rows, key=lambda x: -x["tokens"])
 
     return {
-        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"]),
-        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"]),
-        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"]),
-        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"]),
+        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"]),
+        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"]),
+        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"]),
+        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"]),
     }
 
 
@@ -939,6 +1086,7 @@ canvas{display:block;width:100%}
   <div class="tab active" data-tab="all"         onclick="switchTab('all')">All</div>
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
+  <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Limites</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
@@ -1035,6 +1183,7 @@ canvas{display:block;width:100%}
   <div class="tab"  data-tab="all"         onclick="switchTab('all')">All</div>
   <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
+  <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab active" data-tab="limits" onclick="switchToLimits()">Limites</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
