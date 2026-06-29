@@ -611,7 +611,7 @@ def fetch_claude_code(day_s, week_s, month_s):
     for jf in CC_DIR.rglob("*.jsonl"):
         try: mtime = jf.stat().st_mtime
         except: continue
-        if mtime < START_S: continue
+        if mtime < month_s: continue
 
         try:
             with open(jf, encoding="utf-8", errors="ignore") as f:
@@ -692,9 +692,9 @@ def _top(models: dict) -> str:
 
 def fetch():
     now_dt   = datetime.now()
-    day_s    = max(now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), START_S)
-    week_s   = max(day_s  - 6  * 86400, START_S)
-    month_s  = max(day_s  - 29 * 86400, START_S)
+    day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    week_s   = day_s  - 6  * 86400
+    month_s  = day_s  - 29 * 86400
     day_ms   = int(day_s   * 1000)
     week_ms  = int(week_s  * 1000)
     month_ms = int(month_s * 1000)
@@ -702,7 +702,7 @@ def fetch():
     oc = fetch_opencode(day_ms, week_ms, month_ms)
     cc = fetch_claude_code(day_s, week_s, month_s)
 
-    elapsed_h = max(0.5, (time.time() - max(day_s, START_S)) / 3600)
+    elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
     ds_balance = fetch_deepseek_balance_cached()
 
@@ -796,9 +796,9 @@ def fetch():
 
 def fetch_all_models():
     now_dt   = datetime.now()
-    day_s    = max(now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), START_S)
-    week_s   = max(day_s - 6  * 86400, START_S)
-    month_s  = max(day_s - 29 * 86400, START_S)
+    day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    week_s   = day_s - 6  * 86400
+    month_s  = day_s - 29 * 86400
     day_ms   = int(day_s   * 1000)
     week_ms  = int(week_s  * 1000)
     month_ms = int(month_s * 1000)
@@ -866,7 +866,7 @@ canvas{display:block;width:100%}
 .chart-style-btn:hover{color:rgba(255,255,255,.55)}
 #tip,#tip2{position:fixed;background:rgba(22,22,24,.97);border:1px solid rgba(255,255,255,.13);
   border-radius:6px;padding:5px 9px;font-size:11px;color:rgba(255,255,255,.88);
-  pointer-events:none;display:none;white-space:nowrap;z-index:100;transform:translateX(-50%)}
+  pointer-events:none;display:none;white-space:nowrap;z-index:100}
 .chart-divider{padding:6px 20px 0;font-size:9px;color:rgba(255,255,255,.22);
   text-transform:uppercase;letter-spacing:.06em}
 
@@ -1079,6 +1079,9 @@ function renderTab(tab) {
   const s = __data[tab];
   if (!s) return;
   document.getElementById('v-today').textContent = fmt(s.today_tok);
+  const _elH=(Date.now()-new Date().setHours(0,0,0,0))/3600000;
+  const _todayLbl=_elH<23.5?'Today · '+(_elH<1?Math.round(_elH*60)+'m':(_elH<10?_elH.toFixed(1)+'h':Math.round(_elH)+'h')):'Today';
+  document.getElementById('v-today').previousElementSibling.textContent=_todayLbl;
   document.getElementById('v-week').textContent  = fmt(s.week_tok);
   document.getElementById('v-all').textContent   = fmt(s.all_tok);
   const sessEl  = document.getElementById('stat-sess');
@@ -1325,8 +1328,9 @@ function drawCostChart(daily) {
           tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
         }
         tip.style.display='block';
-        const th=tip.offsetHeight||22;
-        tip.style.left=e.clientX+'px';
+        const th=tip.offsetHeight||22,tipW=tip.offsetWidth||160,winW=340;
+        const left=Math.max(4,Math.min(e.clientX-tipW/2,winW-tipW-4));
+        tip.style.left=left+'px';
         tip.style.top=Math.max(4,e.clientY-th-10)+'px';
       }else{tip.style.display='none';}
     });
