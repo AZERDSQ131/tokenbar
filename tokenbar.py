@@ -25,7 +25,7 @@ from AppKit import (
     NSWindowWillCloseNotification,
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
-from Foundation import NSTimer, NSURL, NSNotificationCenter
+from Foundation import NSTimer, NSURL, NSNotificationCenter, NSMutableAttributedString
 
 OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
 OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
@@ -33,7 +33,7 @@ CC_DIR      = Path.home() / ".claude/projects"
 CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
 OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
 
-W, H   = 340, 320
+W, H   = 360, 320
 DEFAULT_REFRESH = 15.0
 
 DEFAULT_EXCLUDED = {"qwen122b", "qwen3.5"}
@@ -44,6 +44,7 @@ _SETTINGS = {}
 _cc_cache = {"ts": 0.0, "data": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
 _limits_cache = {"ts": 0.0, "data": None, "fetching": False}
+_git_cache = {"ts": 0.0, "counts": [0, 0, 0], "fetching": False}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -149,26 +150,41 @@ def fmt(n):
     return str(n)
 
 
-def _navbar_title(today_tok):
+def _navbar_suffix(today_tok):
     lim = _limits_cache.get("data")
     tok_s = fmt(today_tok)
     if lim and lim.get("session_used") is not None:
         used = lim["session_used"]
-        if used >= 100 and lim.get("session_reset_ts"):
+        cd = ""
+        if lim.get("session_reset_ts"):
             diff = lim["session_reset_ts"] - time.time()
             if diff > 0:
                 h = int(diff // 3600)
                 m = int((diff % 3600) // 60)
-                s = int(diff % 60)
-                if h > 0:
-                    cd = f"{h}h{m:02d}m{s:02d}s"
-                elif m > 0:
-                    cd = f"{m}m{s:02d}s"
-                else:
-                    cd = f"{s}s"
-                return f"{tok_s} / {cd}"
-        return f"{tok_s} / {used}%"
-    return tok_s
+                cd = f" {h}h{m:02d}m" if h > 0 else f" {m}m"
+        return f" {tok_s} / {used}%{cd}"
+    return f" {tok_s}"
+
+
+# GitHub-style greens: dim gray (0) / medium green (1-3) / dark green (4+)
+_GH_COLORS = [
+    (0.45, 0.45, 0.45, 0.35),
+    (0.24, 0.70, 0.40, 1.0),
+    (0.10, 0.50, 0.22, 1.0),
+]
+
+def _set_navbar_title(btn, today_tok):
+    counts = _git_activity()
+    sq_chars = "■■■"
+    suffix   = _navbar_suffix(today_tok)
+    full     = sq_chars + suffix
+    attr = NSMutableAttributedString.alloc().initWithString_(full)
+    for i, c in enumerate(counts):
+        level = 2 if c >= 4 else 1 if c >= 1 else 0
+        r, g, b, a = _GH_COLORS[level]
+        color = NSColor.colorWithRed_green_blue_alpha_(r, g, b, a)
+        attr.addAttribute_value_range_("NSForegroundColor", color, (i, 1))
+    btn.setAttributedTitle_(attr)
 
 
 def model_id(raw):
@@ -201,6 +217,75 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
         return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
 
 
+def _fetch_git_activity_bg():
+    global _git_cache
+    _git_cache["fetching"] = True
+    try:
+        try:
+            r = subprocess.run(["git", "config", "--global", "user.email"],
+                               capture_output=True, text=True, timeout=2)
+            author = r.stdout.strip() or None
+        except Exception:
+            author = None
+
+        today = datetime.now().date()
+        counts = [0, 0, 0]  # [2 days ago, yesterday, today]
+        home = Path.home()
+        search_dirs = [d for d in [home / "Desktop", home / "Documents",
+                                   home / "Projects", home / "dev", home / "code"]
+                       if d.exists()][:4]
+
+        seen = set()
+        for sd in search_dirs:
+            try:
+                res = subprocess.run(
+                    ["find", str(sd), "-maxdepth", "3", "-name", ".git", "-type", "d"],
+                    capture_output=True, text=True, timeout=5)
+                for gd in res.stdout.strip().split("\n"):
+                    if not gd:
+                        continue
+                    repo = str(Path(gd).parent)
+                    if repo in seen:
+                        continue
+                    seen.add(repo)
+                    since = (today - timedelta(days=2)).isoformat()
+                    cmd = ["git", "-C", repo, "log",
+                           f"--since={since}", "--format=%ad", "--date=format:%Y-%m-%d"]
+                    if author:
+                        cmd += [f"--author={author}"]
+                    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                    for ds in r2.stdout.strip().split("\n"):
+                        if not ds:
+                            continue
+                        try:
+                            delta = (today - datetime.strptime(ds, "%Y-%m-%d").date()).days
+                            if 0 <= delta <= 2:
+                                counts[2 - delta] += 1
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        _git_cache["counts"] = counts
+        _git_cache["ts"] = time.time()
+    except Exception:
+        pass
+    finally:
+        _git_cache["fetching"] = False
+
+
+def _git_activity():
+    if time.time() - _git_cache["ts"] > 300 and not _git_cache["fetching"]:
+        threading.Thread(target=_fetch_git_activity_bg, daemon=True).start()
+    return _git_cache["counts"]
+
+
+def _git_squares():
+    sq = []
+    for c in _git_activity():
+        sq.append("■" if c >= 4 else "▪" if c >= 1 else "□")
+    return "".join(sq)
+
+
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
 CLAUDE_PRICING = [
     ("opus-4",    5.00, 25.00, 6.25, 0.50),
@@ -214,6 +299,13 @@ CLAUDE_PRICING = [
 BLENDED_RATES = [  # $/M blended (70% input + 30% output) pour modèles non-Claude
     ("gpt-5.4-mini",       1.9),   # $0.75 in + $4.50 out
     ("gpt-5.5",           12.5),   # $5.00 in + $30.00 out
+    ("gpt-5.4",            7.5),   # $3.00 in + $18.00 out
+    ("gpt-5.3-codex",      3.0),   # codex family
+    ("gpt-5.2-codex",      3.0),
+    ("gpt-5.1-codex",      3.0),
+    ("gpt-5.3",            7.5),
+    ("gpt-5.2",            7.5),
+    ("gpt-5.1",            7.5),
     ("o4-mini",            2.0),
     ("o4",                12.0),
     ("o3",                20.0),
@@ -700,7 +792,8 @@ def fetch_codex(day_ms, week_ms, month_ms):
                 "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
                 "cost_today": cost_today, "cost_all": cost_all, "cost_exact": False,
                 "daily_cost": daily_cost,
-                "breakdown_today": {}, "daily_breakdown": {}}
+                "breakdown_today": {"input": today // 2, "output": today - today // 2},
+                "daily_breakdown": {d: {"i": t // 2, "o": t - t // 2} for d, t in daily.items()}}
     except Exception:
         return {"today": 0, "week": 0, "total": 0,
                 "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
@@ -925,7 +1018,7 @@ def fetch():
             "all_tok":    cx["total"],
             "today_sess": cx["today_sess"],
             "all_sess":   cx["all_sess"],
-            "top_model":  _top(cx["models"]),
+            "top_model":  _top(cx.get("models_1m") or cx["models"]),
             "daily":      daily_list(cx["daily"]),
             "daily_cost": daily_cost_list(cx["daily_cost"]),
             "cost_today": cx["cost_today"],
@@ -977,7 +1070,7 @@ MAIN_HTML = """\
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:340px;background:#1c1c1e;color:#fff;
+html,body{width:360px;background:#1c1c1e;color:#fff;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
   overflow:hidden;-webkit-font-smoothing:antialiased}
 
@@ -1087,7 +1180,7 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
-  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Limites</div>
+  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -1158,7 +1251,7 @@ canvas{display:block;width:100%}
     </div>
   </div>
 </div>
-<div id="ds-row" class="ds-row" style="display:none">DeepSeek: <span id="ds-bal">—</span></div>
+
 
 <div id="quota-row" class="quota-row" style="display:none">
   <div class="quota-header">
@@ -1184,7 +1277,7 @@ canvas{display:block;width:100%}
   <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
-  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Limites</div>
+  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -1322,31 +1415,12 @@ function renderTab(tab) {
     // Top modèle
     const modelEl = document.getElementById('pf-model');
     const mName = (s.top_model_today||s.top_model||'—');
-    const mShort = mName.replace(/^claude-/,'').replace(/-(202\d.*)$/,'').replace(/-/g,' ');
-    modelEl.textContent = mShort.length>12 ? mShort.slice(0,11)+'…' : mShort;
+    const mShort = mName.replace(/^claude-/,'').replace(/-(202\d.*)$/,'').replace(/^[^\/]+\//,'').replace(/-/g,' ');
+    modelEl.textContent = mShort.length>16 ? mShort.slice(0,15)+'…' : mShort;
   } else {
     perfSec.style.display = 'none';
   }
 
-  // DeepSeek balance (All tab only)
-  const dsRow = document.getElementById('ds-row');
-  if (s.ds_balance) {
-    const infos = s.ds_balance.balance_infos || [];
-    const usd = infos.find(function(x){return x.currency==='USD';});
-    const cny = infos.find(function(x){return x.currency==='CNY';});
-    const info = usd || cny;
-    if (info) {
-      const bal = parseFloat(info.total_balance || 0);
-      const sym = info.currency === 'USD' ? '$' : '¥';
-      document.getElementById('ds-bal').textContent =
-        sym + bal.toFixed(2) + ' (' + info.currency + ')';
-      dsRow.style.display = '';
-    } else {
-      dsRow.style.display = 'none';
-    }
-  } else {
-    dsRow.style.display = 'none';
-  }
 }
 
 function filterByPeriod(daily) {
@@ -1532,7 +1606,7 @@ function drawCostChart(daily) {
           tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
         }
         tip.style.display='block';
-        const th=tip.offsetHeight||22,tipW=tip.offsetWidth||160,winW=340;
+        const th=tip.offsetHeight||22,tipW=tip.offsetWidth||160,winW=360;
         const left=Math.max(4,Math.min(e.clientX-tipW/2,winW-tipW-4));
         tip.style.left=left+'px';
         tip.style.top=Math.max(4,e.clientY-th-10)+'px';
@@ -1677,6 +1751,37 @@ function startCountdown(elId, usedPct, resetTs) {
   __countdownTimers.push(id);
 }
 
+function renderUsageSummary() {
+  if (!__data) return '';
+  var rows = [
+    {label:'Claude Code', key:'claude_code'},
+    {label:'OpenCode',    key:'opencode'},
+    {label:'Codex',       key:'codex'},
+  ];
+  var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
+    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
+    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd\'hui</div>';
+  rows.forEach(function(r) {
+    var s = __data[r.key];
+    if (!s || !s.today_tok) return;
+    var cost = s.cost_today > 0 ? ' · $' + s.cost_today.toFixed(3) : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+      + 'margin-bottom:5px;font-size:11px">'
+      + '<span style="color:rgba(255,255,255,.45)">' + r.label + '</span>'
+      + '<span style="color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums">'
+      + fmt(s.today_tok) + ' tok' + cost + '</span></div>';
+  });
+  var all = __data.all;
+  if (all && all.today_tok) {
+    var totalCost = all.cost_today > 0 ? ' · $' + all.cost_today.toFixed(3) : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+      + 'padding-top:6px;border-top:1px solid rgba(255,255,255,.06);font-size:12px;font-weight:600">'
+      + '<span style="color:rgba(255,255,255,.7)">Total</span>'
+      + '<span>' + fmt(all.today_tok) + ' tok' + totalCost + '</span></div>';
+  }
+  return html + '</div>';
+}
+
 function renderLimits() {
   clearCountdowns();
   const lim = __limitsData;
@@ -1686,10 +1791,10 @@ function renderLimits() {
     return;
   }
   if (lim.error && lim.session_used == null && lim.week_used == null) {
-    el.innerHTML = '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
+    el.innerHTML = renderUsageSummary() + '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
     return;
   }
-  var html = '<div class="lim-body">';
+  var html = renderUsageSummary() + '<div class="lim-body">';
   if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
   if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
   if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
@@ -2196,12 +2301,19 @@ class AppDelegate(NSObject):
         else:
             btn = self._item.button()
             self._pop.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, 1)
-            self.inject_data()
+            app_ref = self
+            def _check_and_inject(result, error):
+                if result:
+                    app_ref.inject_data()
+                else:
+                    app_ref.bootstrap_and_inject()
+            self._wv.evaluateJavaScript_completionHandler_(
+                "typeof injectData !== 'undefined'", _check_and_inject)
 
     def tick_(self, _):
         data = fetch()
         if data:
-            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+            _set_navbar_title(self._item.button(), data['all']['today_tok'])
         if self._pop.isShown():
             self._inject_js(data)
         if not hasattr(self, '_login_start_synced'):
@@ -2325,8 +2437,10 @@ class AppDelegate(NSObject):
         """Injecte MAIN_JS dans le monde page, puis les données."""
         data = fetch()
         if data:
-            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+            _set_navbar_title(self._item.button(), data['all']['today_tok'])
         def on_bootstrap(result, error):
+            if error:
+                print(f"[tokenbar] JS bootstrap error: {error}", flush=True)
             if not error and data:
                 self._inject_js(data)
         self._wv.evaluateJavaScript_completionHandler_(MAIN_JS + "\n'bootstrapped'", on_bootstrap)
@@ -2336,7 +2450,7 @@ class AppDelegate(NSObject):
         data = fetch()
         if not data:
             self._item.button().setTitle_("⚠"); return
-        self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+        _set_navbar_title(self._item.button(), data['all']['today_tok'])
         self._inject_js(data)
 
     @objc.python_method
