@@ -1646,7 +1646,6 @@ function drawContribHeatmap() {
   var heatmap = __gitHeatmap || {};
   var dpr = window.devicePixelRatio || 1;
 
-  // Dernier mois = 5 semaines (lun→dim), grosses cellules
   var weeks = 5;
   var cell = 30;
   var gap = 4;
@@ -1668,9 +1667,8 @@ function drawContribHeatmap() {
   var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
   function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
 
-  // Démarrer au lundi de la semaine d'il y a (weeks-1) semaines
   var today = new Date(); today.setHours(0,0,0,0);
-  var dayOfWeek = (today.getDay() + 6) % 7; // 0=lun … 6=dim
+  var dayOfWeek = (today.getDay() + 6) % 7;
   var start = new Date(today);
   start.setDate(start.getDate() - dayOfWeek - (weeks - 1) * 7);
 
@@ -1700,14 +1698,12 @@ function drawContribHeatmap() {
     }
   }
 
-  // Labels jours : Lun / Mer / Ven
   ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,.38)';
   ['Lun','','Mer','','Ven','',''].forEach(function(lbl, i) {
     if (lbl) ctx.fillText(lbl, 0, topPad + i * step + cell * 0.72);
   });
 
-  // Légende Less / More (petites cases 12px)
   var legY = topPad + 7 * step - gap + 16;
   var legX = leftPad + gridW - (5 * 16 - 2);
   ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
@@ -1722,6 +1718,50 @@ function drawContribHeatmap() {
   });
   ctx.fillStyle = 'rgba(255,255,255,.35)';
   ctx.fillText('More', legX + 5*16 + 2, legY);
+
+  // Tooltip au survol
+  var tip = document.getElementById('contrib-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'contrib-tip';
+    tip.style.cssText = 'position:fixed;display:none;background:#1c2128;border:1px solid rgba(255,255,255,.12);'
+      + 'border-radius:6px;padding:6px 10px;font-size:11px;color:rgba(255,255,255,.85);'
+      + 'pointer-events:none;z-index:999;white-space:nowrap;line-height:1.5;'
+      + 'box-shadow:0 4px 12px rgba(0,0,0,.5)';
+    document.body.appendChild(tip);
+  }
+
+  var joursNom = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+  canvas.onmousemove = function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var col = Math.floor((mx - leftPad) / step);
+    var row = Math.floor((my - topPad) / step);
+    if (col < 0 || col >= weeks || row < 0 || row >= 7) { tip.style.display='none'; return; }
+    var cx = leftPad + col * step;
+    var cy = topPad + row * step;
+    if (mx < cx || mx > cx + cell || my < cy || my > cy + cell) { tip.style.display='none'; return; }
+    var dd = new Date(start);
+    dd.setDate(dd.getDate() + col * 7 + row);
+    if (dd > today) { tip.style.display='none'; return; }
+    var ds = dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0');
+    var cnt = heatmap[ds] || 0;
+    var label = cnt === 0 ? 'Aucune contribution'
+      : cnt === 1 ? '1 contribution'
+      : cnt + ' contributions';
+    var dayName = joursNom[dd.getDay()];
+    var dateStr = dayName + ' ' + dd.getDate() + ' ' + mois[dd.getMonth()];
+    tip.innerHTML = '<strong>' + label + '</strong><br><span style="opacity:.55">' + dateStr + '</span>';
+    var tx = e.clientX + 10;
+    var ty = e.clientY - 40;
+    if (tx + 160 > window.innerWidth) tx = e.clientX - 170;
+    if (ty < 0) ty = e.clientY + 14;
+    tip.style.left = tx + 'px';
+    tip.style.top  = ty + 'px';
+    tip.style.display = 'block';
+  };
+  canvas.onmouseleave = function() { tip.style.display = 'none'; };
 }
 
 function switchToLimits() {
