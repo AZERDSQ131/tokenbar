@@ -449,7 +449,8 @@ def _fetch_limits_impl() -> dict:
     try:
         proc = subprocess.run(
             ["claude", "/usage"],
-            capture_output=True, text=True, timeout=20, env=env,
+            capture_output=True, text=True, timeout=45, env=env,
+            stdin=subprocess.DEVNULL,
         )
         raw = proc.stdout + proc.stderr
         data = _parse_claude_limits(raw)
@@ -1659,73 +1660,83 @@ function drawContribHeatmap() {
   if (!canvas) return;
   var heatmap = __gitHeatmap || {};
   var dpr = window.devicePixelRatio || 1;
-  var W = 320;
-  var weeks = 52;
-  var leftPad = 26;
-  var topPad = 18;
-  var cellGap = 2;
-  var step = Math.floor((W - leftPad) / weeks);
-  var cell = step - cellGap;
-  var H = topPad + 7 * step + 20;
-  canvas.width = W * dpr;
+
+  // Dernier mois = 5 semaines (lun→dim), grosses cellules
+  var weeks = 5;
+  var cell = 30;
+  var gap = 4;
+  var step = cell + gap;
+  var leftPad = 34;
+  var topPad = 22;
+  var legH = 22;
+  var gridW = weeks * step - gap;
+  var totalW = leftPad + gridW + 4;
+  var H = topPad + 7 * step - gap + legH + 8;
+
+  canvas.width = totalW * dpr;
   canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
+  canvas.style.width = totalW + 'px';
   canvas.style.height = H + 'px';
   var ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
 
   var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
-  function lvl(c) { return !c?0:c<=1?1:c<=3?2:c<=6?3:4; }
+  function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
 
-  // Aligner au dimanche précédant il y a 52 semaines
+  // Démarrer au lundi de la semaine d'il y a (weeks-1) semaines
   var today = new Date(); today.setHours(0,0,0,0);
+  var dayOfWeek = (today.getDay() + 6) % 7; // 0=lun … 6=dim
   var start = new Date(today);
-  start.setDate(start.getDate() - weeks*7 - today.getDay() + 1);
+  start.setDate(start.getDate() - dayOfWeek - (weeks - 1) * 7);
+
+  var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
+              'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  ctx.font = '11px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.45)';
+  ctx.fillText(mois[today.getMonth()] + ' ' + today.getFullYear(), leftPad, 14);
 
   var d = new Date(start);
-  var prevMonth = -1;
-  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  ctx.font = '9px -apple-system,BlinkMacSystemFont,sans-serif';
-
   for (var w = 0; w < weeks; w++) {
     for (var row = 0; row < 7; row++) {
-      var ds = d.toISOString().slice(0,10);
-      var c = heatmap[ds] || 0;
-      ctx.fillStyle = colors[lvl(c)];
-      var x = leftPad + w * step;
-      var y = topPad + row * step;
-      ctx.beginPath();
-      if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 1.5); } else { ctx.rect(x, y, cell, cell); }
-      ctx.fill();
-      if (row === 0 && d.getMonth() !== prevMonth) {
-        prevMonth = d.getMonth();
-        ctx.fillStyle = 'rgba(255,255,255,.38)';
-        ctx.fillText(months[d.getMonth()], x, 11);
+      if (d <= today) {
+        var ds = d.getFullYear() + '-'
+          + String(d.getMonth()+1).padStart(2,'0') + '-'
+          + String(d.getDate()).padStart(2,'0');
+        var c = heatmap[ds] || 0;
+        ctx.fillStyle = colors[lvl(c)];
+        var x = leftPad + w * step;
+        var y = topPad + row * step;
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 4); }
+        else { ctx.rect(x, y, cell, cell); }
+        ctx.fill();
       }
       d.setDate(d.getDate() + 1);
     }
   }
 
-  // Labels jours
+  // Labels jours : Lun / Mer / Ven
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,.38)';
-  ['','Mon','','Wed','','Fri',''].forEach(function(lbl, i) {
-    if (lbl) ctx.fillText(lbl, 0, topPad + i * step + cell);
+  ['Lun','','Mer','','Ven','',''].forEach(function(lbl, i) {
+    if (lbl) ctx.fillText(lbl, 0, topPad + i * step + cell * 0.72);
   });
 
-  // Légende Less / More
-  var legY = H - 4;
-  var legX = leftPad + weeks * step - 5 * (cell + cellGap);
-  ctx.fillStyle = 'rgba(255,255,255,.38)';
-  ctx.fillText('Less', legX - 30, legY);
+  // Légende Less / More (petites cases 12px)
+  var legY = topPad + 7 * step - gap + 16;
+  var legX = leftPad + gridW - (5 * 16 - 2);
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.fillText('Less', legX - 34, legY);
   colors.forEach(function(col, i) {
     ctx.fillStyle = col;
     ctx.beginPath();
-    if (ctx.roundRect) { ctx.roundRect(legX + i*(cell+cellGap), legY - cell, cell, cell, 1.5); }
-    else { ctx.rect(legX + i*(cell+cellGap), legY - cell, cell, cell); }
+    if (ctx.roundRect) { ctx.roundRect(legX + i*16, legY - 11, 12, 12, 2); }
+    else { ctx.rect(legX + i*16, legY - 11, 12, 12); }
     ctx.fill();
   });
-  ctx.fillStyle = 'rgba(255,255,255,.38)';
-  ctx.fillText('More', legX + 5*(cell+cellGap) + 2, legY);
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.fillText('More', legX + 5*16 + 2, legY);
 }
 
 function switchToLimits() {
