@@ -25,7 +25,7 @@ from AppKit import (
     NSWindowWillCloseNotification,
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
-from Foundation import NSTimer, NSURL, NSNotificationCenter, NSMutableAttributedString
+from Foundation import NSTimer, NSURL, NSNotificationCenter
 
 OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
 OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
@@ -44,7 +44,7 @@ _SETTINGS = {}
 _cc_cache = {"ts": 0.0, "data": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
 _limits_cache = {"ts": 0.0, "data": None, "fetching": False}
-_git_cache = {"ts": 0.0, "counts": [0, 0, 0], "fetching": False}
+_git_cache = {"ts": 0.0, "heatmap": {}, "fetching": False}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -150,7 +150,7 @@ def fmt(n):
     return str(n)
 
 
-def _navbar_suffix(today_tok):
+def _navbar_title(today_tok):
     lim = _limits_cache.get("data")
     tok_s = fmt(today_tok)
     if lim and lim.get("session_used") is not None:
@@ -162,29 +162,8 @@ def _navbar_suffix(today_tok):
                 h = int(diff // 3600)
                 m = int((diff % 3600) // 60)
                 cd = f" {h}h{m:02d}m" if h > 0 else f" {m}m"
-        return f" {tok_s} / {used}%{cd}"
-    return f" {tok_s}"
-
-
-# GitHub-style greens: dim gray (0) / medium green (1-3) / dark green (4+)
-_GH_COLORS = [
-    (0.45, 0.45, 0.45, 0.35),
-    (0.24, 0.70, 0.40, 1.0),
-    (0.10, 0.50, 0.22, 1.0),
-]
-
-def _set_navbar_title(btn, today_tok):
-    counts = _git_activity()
-    sq_chars = "■■■"
-    suffix   = _navbar_suffix(today_tok)
-    full     = sq_chars + suffix
-    attr = NSMutableAttributedString.alloc().initWithString_(full)
-    for i, c in enumerate(counts):
-        level = 2 if c >= 4 else 1 if c >= 1 else 0
-        r, g, b, a = _GH_COLORS[level]
-        color = NSColor.colorWithRed_green_blue_alpha_(r, g, b, a)
-        attr.addAttribute_value_range_("NSForegroundColor", color, (i, 1))
-    btn.setAttributedTitle_(attr)
+        return f"{tok_s} / {used}%{cd}"
+    return tok_s
 
 
 def model_id(raw):
@@ -217,7 +196,7 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
         return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
 
 
-def _fetch_git_activity_bg():
+def _fetch_git_heatmap_bg():
     global _git_cache
     _git_cache["fetching"] = True
     try:
@@ -229,7 +208,7 @@ def _fetch_git_activity_bg():
             author = None
 
         today = datetime.now().date()
-        counts = [0, 0, 0]  # [2 days ago, yesterday, today]
+        counts = {}  # date_str -> commit count
         home = Path.home()
         search_dirs = [d for d in [home / "Desktop", home / "Documents",
                                    home / "Projects", home / "dev", home / "code"]
@@ -240,7 +219,7 @@ def _fetch_git_activity_bg():
             try:
                 res = subprocess.run(
                     ["find", str(sd), "-maxdepth", "3", "-name", ".git", "-type", "d"],
-                    capture_output=True, text=True, timeout=5)
+                    capture_output=True, text=True, timeout=6)
                 for gd in res.stdout.strip().split("\n"):
                     if not gd:
                         continue
@@ -248,24 +227,18 @@ def _fetch_git_activity_bg():
                     if repo in seen:
                         continue
                     seen.add(repo)
-                    since = (today - timedelta(days=2)).isoformat()
+                    since = (today - timedelta(days=365)).isoformat()
                     cmd = ["git", "-C", repo, "log",
                            f"--since={since}", "--format=%ad", "--date=format:%Y-%m-%d"]
                     if author:
                         cmd += [f"--author={author}"]
-                    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
                     for ds in r2.stdout.strip().split("\n"):
-                        if not ds:
-                            continue
-                        try:
-                            delta = (today - datetime.strptime(ds, "%Y-%m-%d").date()).days
-                            if 0 <= delta <= 2:
-                                counts[2 - delta] += 1
-                        except Exception:
-                            pass
+                        if ds:
+                            counts[ds] = counts.get(ds, 0) + 1
             except Exception:
                 pass
-        _git_cache["counts"] = counts
+        _git_cache["heatmap"] = counts
         _git_cache["ts"] = time.time()
     except Exception:
         pass
@@ -273,17 +246,10 @@ def _fetch_git_activity_bg():
         _git_cache["fetching"] = False
 
 
-def _git_activity():
+def _git_heatmap():
     if time.time() - _git_cache["ts"] > 300 and not _git_cache["fetching"]:
-        threading.Thread(target=_fetch_git_activity_bg, daemon=True).start()
-    return _git_cache["counts"]
-
-
-def _git_squares():
-    sq = []
-    for c in _git_activity():
-        sq.append("■" if c >= 4 else "▪" if c >= 1 else "□")
-    return "".join(sq)
+        threading.Thread(target=_fetch_git_heatmap_bg, daemon=True).start()
+    return _git_cache["heatmap"]
 
 
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
@@ -1649,6 +1615,7 @@ function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
   if(d.limits != null){__limitsData = d.limits;}
+  if(d.git_heatmap != null){__gitHeatmap = d.git_heatmap;}
   if(__onLimitsPage){
     renderLimits();
   } else {
@@ -1681,10 +1648,85 @@ function setColor(hex){
   act('saveSettings',JSON.stringify(__settings));
 }
 
-// ── Limites ──────────────────────────────────────────────────────────────────
+// ── Heatmap GitHub ───────────────────────────────────────────────────────────
 
 let __limitsData = null;
 let __onLimitsPage = false;
+let __gitHeatmap = {};
+
+function drawContribHeatmap() {
+  var canvas = document.getElementById('contrib-canvas');
+  if (!canvas) return;
+  var heatmap = __gitHeatmap || {};
+  var dpr = window.devicePixelRatio || 1;
+  var W = 320;
+  var weeks = 52;
+  var leftPad = 26;
+  var topPad = 18;
+  var cellGap = 2;
+  var step = Math.floor((W - leftPad) / weeks);
+  var cell = step - cellGap;
+  var H = topPad + 7 * step + 20;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
+  function lvl(c) { return !c?0:c<=1?1:c<=3?2:c<=6?3:4; }
+
+  // Aligner au dimanche précédant il y a 52 semaines
+  var today = new Date(); today.setHours(0,0,0,0);
+  var start = new Date(today);
+  start.setDate(start.getDate() - weeks*7 - today.getDay() + 1);
+
+  var d = new Date(start);
+  var prevMonth = -1;
+  var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  ctx.font = '9px -apple-system,BlinkMacSystemFont,sans-serif';
+
+  for (var w = 0; w < weeks; w++) {
+    for (var row = 0; row < 7; row++) {
+      var ds = d.toISOString().slice(0,10);
+      var c = heatmap[ds] || 0;
+      ctx.fillStyle = colors[lvl(c)];
+      var x = leftPad + w * step;
+      var y = topPad + row * step;
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 1.5); } else { ctx.rect(x, y, cell, cell); }
+      ctx.fill();
+      if (row === 0 && d.getMonth() !== prevMonth) {
+        prevMonth = d.getMonth();
+        ctx.fillStyle = 'rgba(255,255,255,.38)';
+        ctx.fillText(months[d.getMonth()], x, 11);
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Labels jours
+  ctx.fillStyle = 'rgba(255,255,255,.38)';
+  ['','Mon','','Wed','','Fri',''].forEach(function(lbl, i) {
+    if (lbl) ctx.fillText(lbl, 0, topPad + i * step + cell);
+  });
+
+  // Légende Less / More
+  var legY = H - 4;
+  var legX = leftPad + weeks * step - 5 * (cell + cellGap);
+  ctx.fillStyle = 'rgba(255,255,255,.38)';
+  ctx.fillText('Less', legX - 30, legY);
+  colors.forEach(function(col, i) {
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(legX + i*(cell+cellGap), legY - cell, cell, cell, 1.5); }
+    else { ctx.rect(legX + i*(cell+cellGap), legY - cell, cell, cell); }
+    ctx.fill();
+  });
+  ctx.fillStyle = 'rgba(255,255,255,.38)';
+  ctx.fillText('More', legX + 5*(cell+cellGap) + 2, legY);
+}
 
 function switchToLimits() {
   __onLimitsPage = true;
@@ -1786,36 +1828,31 @@ function renderLimits() {
   clearCountdowns();
   const lim = __limitsData;
   const el = document.getElementById('lim-body');
+
+  var heatmapHtml = '<div style="padding:14px 16px 6px">'
+    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
+    + 'color:rgba(255,255,255,.28);margin-bottom:8px">Contributions</div>'
+    + '<canvas id="contrib-canvas" style="display:block"></canvas>'
+    + '</div>';
+
   if (!lim) {
-    el.innerHTML = '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
-    return;
+    el.innerHTML = heatmapHtml + renderUsageSummary()
+      + '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
+    drawContribHeatmap(); return;
   }
   if (lim.error && lim.session_used == null && lim.week_used == null) {
-    el.innerHTML = renderUsageSummary() + '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
-    return;
+    el.innerHTML = heatmapHtml + renderUsageSummary()
+      + '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
+    drawContribHeatmap(); return;
   }
-  var html = renderUsageSummary() + '<div class="lim-body">';
+  var html = heatmapHtml + renderUsageSummary() + '<div class="lim-body">';
   if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
   if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
   if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
   if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
-  // DeepSeek balance
-  if (__data && __data.all && __data.all.ds_balance) {
-    var infos = __data.all.ds_balance.balance_infos || [];
-    var usd = infos.find(function(x){return x.currency==='USD';});
-    var cny = infos.find(function(x){return x.currency==='CNY';});
-    var info = usd || cny;
-    if (info) {
-      var bal = parseFloat(info.total_balance||0);
-      var sym = info.currency==='USD'?'$':'¥';
-      html += '<div class="lim-ds-row">'
-        +'<span class="lim-ds-label">DeepSeek</span>'
-        +'<span class="lim-ds-val">'+sym+bal.toFixed(4)+' <span class="lim-ds-cur">'+info.currency+'</span></span>'
-        +'</div>';
-    }
-  }
   html += '</div>';
   el.innerHTML = html;
+  drawContribHeatmap();
   startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
   startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
   startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
@@ -2313,7 +2350,7 @@ class AppDelegate(NSObject):
     def tick_(self, _):
         data = fetch()
         if data:
-            _set_navbar_title(self._item.button(), data['all']['today_tok'])
+            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         if self._pop.isShown():
             self._inject_js(data)
         if not hasattr(self, '_login_start_synced'):
@@ -2437,7 +2474,7 @@ class AppDelegate(NSObject):
         """Injecte MAIN_JS dans le monde page, puis les données."""
         data = fetch()
         if data:
-            _set_navbar_title(self._item.button(), data['all']['today_tok'])
+            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         def on_bootstrap(result, error):
             if error:
                 print(f"[tokenbar] JS bootstrap error: {error}", flush=True)
@@ -2450,14 +2487,15 @@ class AppDelegate(NSObject):
         data = fetch()
         if not data:
             self._item.button().setTitle_("⚠"); return
-        _set_navbar_title(self._item.button(), data['all']['today_tok'])
+        self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         self._inject_js(data)
 
     @objc.python_method
     def _inject_js(self, data):
         if not data: return
         payload = dict(data, settings=_SETTINGS,
-                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES])
+                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES],
+                       git_heatmap=_git_heatmap())
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
