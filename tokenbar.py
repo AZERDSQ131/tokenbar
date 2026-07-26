@@ -698,19 +698,22 @@ def fetch_codex(day_ms, week_ms, month_ms, since_ms=None):
         def one(q, *a):
             c.execute(q, a); return c.fetchone()[0] or 0
 
-        today  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
-        week   = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", week_ms)
-        total  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0")
-        t_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
-        a_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0")
+        # Includes archived threads: CodexBar's file-based scanner reads
+        # sessions/ and archived_sessions/ alike, so archiving a thread must
+        # not make its tokens disappear from the totals.
+        today  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE updated_at_ms>=?", day_ms)
+        week   = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE updated_at_ms>=?", week_ms)
+        total  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads")
+        t_sess = one("SELECT COUNT(*) FROM threads WHERE updated_at_ms>=?", day_ms)
+        a_sess = one("SELECT COUNT(*) FROM threads")
 
         c.execute("""SELECT date(updated_at_ms/1000,'unixepoch','localtime'),
                             COALESCE(SUM(tokens_used),0)
-                     FROM threads WHERE archived=0 AND updated_at_ms>=? GROUP BY 1""", (since_ms,))
+                     FROM threads WHERE updated_at_ms>=? GROUP BY 1""", (since_ms,))
         daily = {r[0]: r[1] for r in c.fetchall()}
 
         c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
-                     FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                     FROM threads WHERE model IS NOT NULL AND model != ''
                      GROUP BY model ORDER BY 2 DESC""")
         models = {}
         for r in c.fetchall():
@@ -725,7 +728,7 @@ def fetch_codex(day_ms, week_ms, month_ms, since_ms=None):
 
         def mq(since):
             c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
-                         FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                         FROM threads WHERE model IS NOT NULL AND model != ''
                          AND updated_at_ms>=? GROUP BY model ORDER BY 2 DESC""", (since,))
             return {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
 
