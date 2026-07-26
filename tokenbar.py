@@ -887,6 +887,10 @@ def fetch():
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
     ds_balance = fetch_deepseek_balance_cached()
 
+    elapsed_h = max(0.5, (time.time() - day_s) / 3600)
+    tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
+    ds_balance = fetch_deepseek_balance_cached()
+
     def merged_daily(*dicts):
         dates = sorted(set().union(*[d.keys() for d in dicts]))
         return [{"date": d, "tokens": sum(dd.get(d, 0) for dd in dicts)} for d in dates]
