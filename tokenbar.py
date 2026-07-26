@@ -27,10 +27,13 @@ from AppKit import (
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL, NSNotificationCenter
 
-OC_DB  = Path.home() / ".local/share/opencode/opencode.db"
-CC_DIR = Path.home() / ".claude/projects"
+OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
+OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
+CC_DIR      = Path.home() / ".claude/projects"
+CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
+OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
 
-W, H   = 340, 320
+W, H   = 360, 320
 DEFAULT_REFRESH = 15.0
 
 DEFAULT_EXCLUDED = {"qwen122b", "qwen3.5"}
@@ -41,6 +44,7 @@ _SETTINGS = {}
 _cc_cache = {"ts": 0.0, "data": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
 _limits_cache = {"ts": 0.0, "data": None, "fetching": False}
+_git_cache = {"ts": 0.0, "heatmap": {}, "fetching": False}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -150,7 +154,15 @@ def _navbar_title(today_tok):
     lim = _limits_cache.get("data")
     tok_s = fmt(today_tok)
     if lim and lim.get("session_used") is not None:
-        return f"{tok_s} / {lim['session_used']}%"
+        used = lim["session_used"]
+        cd = ""
+        if lim.get("session_reset_ts"):
+            diff = lim["session_reset_ts"] - time.time()
+            if diff > 0:
+                h = int(diff // 3600)
+                m = int((diff % 3600) // 60)
+                cd = f" {h}h{m:02d}m" if h > 0 else f" {m}m"
+        return f"{tok_s} / {used}%{cd}"
     return tok_s
 
 
@@ -184,6 +196,43 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
         return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
 
 
+_GH_LOGIN = "AZERDSQ131"
+_GH_CLI   = "/opt/homebrew/bin/gh"
+
+def _fetch_git_heatmap_bg():
+    global _git_cache
+    _git_cache["fetching"] = True
+    try:
+        gql = ('{ user(login: "' + _GH_LOGIN + '") { contributionsCollection {'
+               ' contributionCalendar { weeks { contributionDays {'
+               ' date contributionCount } } } } } }')
+        r = subprocess.run(
+            [_GH_CLI, "api", "graphql", "-f", "query=" + gql],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+        data = json.loads(r.stdout)
+        weeks = (data["data"]["user"]["contributionsCollection"]
+                 ["contributionCalendar"]["weeks"])
+        counts = {}
+        for w in weeks:
+            for day in w["contributionDays"]:
+                if day["contributionCount"]:
+                    counts[day["date"]] = day["contributionCount"]
+        _git_cache["heatmap"] = counts
+        _git_cache["ts"] = time.time()
+    except Exception as e:
+        print(f"[tokenbar] heatmap error: {e}", flush=True)
+    finally:
+        _git_cache["fetching"] = False
+
+
+def _git_heatmap():
+    if time.time() - _git_cache["ts"] > 300 and not _git_cache["fetching"]:
+        threading.Thread(target=_fetch_git_heatmap_bg, daemon=True).start()
+    return _git_cache["heatmap"]
+
+
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
 CLAUDE_PRICING = [
     ("opus-4",    5.00, 25.00, 6.25, 0.50),
@@ -197,6 +246,13 @@ CLAUDE_PRICING = [
 BLENDED_RATES = [  # $/M blended (70% input + 30% output) pour modèles non-Claude
     ("gpt-5.4-mini",       1.9),   # $0.75 in + $4.50 out
     ("gpt-5.5",           12.5),   # $5.00 in + $30.00 out
+    ("gpt-5.4",            7.5),   # $3.00 in + $18.00 out
+    ("gpt-5.3-codex",      3.0),   # codex family
+    ("gpt-5.2-codex",      3.0),
+    ("gpt-5.1-codex",      3.0),
+    ("gpt-5.3",            7.5),
+    ("gpt-5.2",            7.5),
+    ("gpt-5.1",            7.5),
     ("o4-mini",            2.0),
     ("o4",                12.0),
     ("o3",                20.0),
@@ -233,12 +289,57 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub('', text)
 
 
+_RESET_REL_RE = re.compile(r'in\s+(?:about\s+)?(\d+)\s+(hour|minute|day)s?', re.IGNORECASE)
+_RESET_ABS_RE = re.compile(
+    r'(\w{3})\s+(\d+)\s+at\s+(\d{1,2}):(\d{2})\s*([ap]m)',
+    re.IGNORECASE)
+_MONTH_MAP = {m: i+1 for i, m in enumerate(
+    ['jan','feb','mar','apr','may','jun',
+     'jul','aug','sep','oct','nov','dec'])}
+
+def _parse_reset_ts(text):
+    if not text:
+        return None
+    now = time.time()
+    # relative: "in X hours/minutes/days"
+    m = _RESET_REL_RE.search(text)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2).lower()
+        offset = n * {'hour': 3600, 'minute': 60, 'day': 86400}.get(unit, 3600)
+        return now + offset
+    # absolute: "Jun 28 at 12:50am"
+    m = _RESET_ABS_RE.search(text)
+    if m:
+        month = _MONTH_MAP.get(m.group(1).lower()[:3])
+        if not month:
+            return None
+        day = int(m.group(2))
+        hour = int(m.group(3))
+        minute = int(m.group(4))
+        ampm = m.group(5).lower()
+        if ampm == 'pm' and hour < 12:
+            hour += 12
+        elif ampm == 'am' and hour == 12:
+            hour = 0
+        try:
+            from datetime import datetime
+            dt = datetime.now().replace(
+                month=month, day=day, hour=hour, minute=minute,
+                second=0, microsecond=0)
+        except ValueError:
+            return None
+        return dt.timestamp()
+    return None
+
+
 def _parse_claude_limits(text: str) -> dict:
     text = _strip_ansi(text)
+    now = time.time()
     result: dict = {
-        "session_pct": None, "session_used": None, "session_reset": None,
-        "week_pct": None, "week_used": None, "week_reset": None,
-        "opus_pct": None, "opus_used": None, "opus_reset": None,
+        "session_pct": None, "session_used": None, "session_reset": None, "session_reset_ts": None,
+        "week_pct": None, "week_used": None, "week_reset": None, "week_reset_ts": None,
+        "opus_pct": None, "opus_used": None, "opus_reset": None, "opus_reset_ts": None,
         "plan": None,
         "stats_24h": None, "stats_7d": None,
         "error": None,
@@ -276,12 +377,14 @@ def _parse_claude_limits(text: str) -> dict:
         result["session_used"] = s_used
         result["session_pct"]  = s_left
         result["session_reset"] = s_reset
+        result["session_reset_ts"] = _parse_reset_ts(s_reset)
 
     w_used, w_left, w_reset = parse_window(r'Current\s+week\s*\(all\s+models\)')
     if w_used is not None:
         result["week_used"] = w_used
         result["week_pct"]  = w_left
         result["week_reset"] = w_reset
+        result["week_reset_ts"] = _parse_reset_ts(w_reset)
 
     o_used, o_left, o_reset = parse_window(
         r'Current\s+week\s*\((?:Opus|Sonnet\s+only|Sonnet)\)')
@@ -289,6 +392,7 @@ def _parse_claude_limits(text: str) -> dict:
         result["opus_used"] = o_used
         result["opus_pct"]  = o_left
         result["opus_reset"] = o_reset
+        result["opus_reset_ts"] = _parse_reset_ts(o_reset)
 
     def parse_stats_block(header_re, stop_re=None):
         m = re.search(header_re + r'\s*[·•]\s*(\d+)\s+requests?\s*[·•]\s*(\d+)\s+sessions?'
@@ -322,11 +426,16 @@ def _parse_claude_limits(text: str) -> dict:
 
 
 def _fetch_limits_impl() -> dict:
+    claude_bin = "/opt/homebrew/bin/claude"
+    if not os.path.exists(claude_bin):
+        import shutil
+        claude_bin = shutil.which("claude") or "claude"
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "CI": "1"}
     try:
         proc = subprocess.run(
-            ["claude", "/usage"],
-            capture_output=True, text=True, timeout=20, env=env,
+            [claude_bin, "/usage"],
+            capture_output=True, text=True, timeout=45, env=env,
+            stdin=subprocess.DEVNULL,
         )
         raw = proc.stdout + proc.stderr
         data = _parse_claude_limits(raw)
@@ -360,58 +469,85 @@ def fetch_claude_limits_cached():
 
 # ── OpenCode ──────────────────────────────────────────────────────────────────
 
-def fetch_opencode(day_ms, week_ms, month_ms):
-    if not OC_DB.exists():
-        return {"today": 0, "week": 0, "total": 0,
-                "today_sess": 0, "all_sess": 0,
-                "daily": {}, "models": {}}
+def fetch_opencode_workflow_tokens():
+    """Read tokens from workflow agent sessions not yet persisted to opencode.db."""
     try:
-        con = sqlite3.connect(f"file:{OC_DB}?mode=ro", uri=True)
+        if not OC_WF_DIR.exists():
+            return {}
+        result = {}
+        now = time.time()
+        for wf_dir in sorted(OC_WF_DIR.iterdir()):
+            if not wf_dir.is_dir():
+                continue
+            tokens_file = wf_dir / "tokens.json"
+            wf_file     = wf_dir / "workflow.json"
+            if not tokens_file.exists() or not wf_file.exists():
+                continue
+            try:
+                tokens = json.loads(tokens_file.read_text())
+                wf     = json.loads(wf_file.read_text())
+                wf_created_ms = (wf.get("time") or {}).get("created", 0)
+                if wf_created_ms < (now - 30 * 86400) * 1000:
+                    continue
+                total = sum(v for v in tokens.values() if isinstance(v, (int, float)))
+                if total > 0:
+                    result[wf_dir.name] = {
+                        "total": int(total),
+                        "created_ms": wf_created_ms,
+                    }
+            except Exception:
+                continue
+        return result
+    except Exception:
+        return {}
+
+
+def _oc_read_db(db_path, day_ms, week_ms, month_ms, since_ms=None):
+    """Read a single OpenCode DB and return raw aggregates."""
+    if since_ms is None:
+        since_ms = month_ms
+    if not db_path.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         c = con.cursor()
 
         def one(q, *a):
             c.execute(q, a); return c.fetchone()[0] or 0
 
-        today  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
-        week   = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", week_ms)
-        total  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL")
+        today  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
+        week   = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL AND time_updated>=?", week_ms)
+        total  = one("SELECT COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0) FROM session WHERE time_archived IS NULL")
         t_sess = one("SELECT COUNT(*) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
         a_sess = one("SELECT COUNT(*) FROM session WHERE time_archived IS NULL")
 
         c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
-                            COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
-                     FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (month_ms,))
+                            COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0)
+                     FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (since_ms,))
         daily = {r[0]: r[1] for r in c.fetchall()}
 
-        c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
+        c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                      GROUP BY model ORDER BY 2 DESC""")
-        models = {model_id(r[0]): r[1] for r in c.fetchall()
-                  if not is_excluded(model_id(r[0]))}
+        models = {}
+        for r in c.fetchall():
+            mid = model_id(r[0])
+            if is_excluded(mid): continue
+            models[mid] = models.get(mid, 0) + r[1]
 
         cost_today = one("SELECT COALESCE(SUM(cost),0.0) FROM session WHERE time_archived IS NULL AND time_updated>=?", day_ms)
         cost_all   = one("SELECT COALESCE(SUM(cost),0.0) FROM session WHERE time_archived IS NULL")
         c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
                             COALESCE(SUM(cost),0.0)
                      FROM session WHERE time_archived IS NULL AND time_updated>=?
-                     GROUP BY 1""", (month_ms,))
+                     GROUP BY 1""", (since_ms,))
         daily_cost_raw = {r[0]: r[1] for r in c.fetchall()}
-        cost_exact = True
-        # Fallback si OpenCode ne peuple pas la colonne cost
-        if cost_all == 0 and total > 0:
-            cost_all   = sum(estimate_cost(m, t) for m, t in models.items())
-            cost_today = cost_all * today / total if total > 0 else 0.0
-            daily_cost_raw = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
-            cost_exact = False
 
         def mq(since):
-            c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_cache_read+tokens_cache_write),0)
+            c.execute("""SELECT model, COALESCE(SUM(tokens_input+tokens_output+tokens_reasoning+tokens_cache_read+tokens_cache_write),0)
                          FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                          AND time_updated>=? GROUP BY model ORDER BY 2 DESC""", (since,))
             return {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
-        models_1d = mq(day_ms)
-        models_7d = mq(week_ms)
-        models_1m = mq(month_ms)
 
         def mcq(since):
             c.execute("""SELECT model, COALESCE(SUM(cost),0.0)
@@ -422,40 +558,45 @@ def fetch_opencode(day_ms, week_ms, month_ms):
         c.execute("""SELECT model, COALESCE(SUM(cost),0.0)
                      FROM session WHERE time_archived IS NULL AND model IS NOT NULL
                      GROUP BY model""")
-        oc_model_costs     = {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
-        oc_model_costs_1d  = mcq(day_ms)
-        oc_model_costs_7d  = mcq(week_ms)
-        oc_model_costs_1m  = mcq(month_ms)
-
-        if not cost_exact:
-            oc_model_costs    = {m: estimate_cost(m, t) for m, t in models.items()}
-            oc_model_costs_1d = {m: estimate_cost(m, t) for m, t in models_1d.items()}
-            oc_model_costs_7d = {m: estimate_cost(m, t) for m, t in models_7d.items()}
-            oc_model_costs_1m = {m: estimate_cost(m, t) for m, t in models_1m.items()}
+        model_costs = {model_id(r[0]): r[1] for r in c.fetchall() if not is_excluded(model_id(r[0]))}
 
         c.execute("""SELECT COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
+                            COALESCE(SUM(tokens_reasoning),0),
                             COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
                      FROM session WHERE time_archived IS NULL AND time_updated>=?""", (day_ms,))
-        row = c.fetchone() or (0, 0, 0, 0)
-        oc_bd_today = {"input": row[0], "output": row[1], "cache_read": row[2], "cache_write": row[3]}
+        row = c.fetchone() or (0, 0, 0, 0, 0)
+        bd_today = {"input": row[0], "output": row[1], "reasoning": row[2], "cache_read": row[3], "cache_write": row[4]}
 
         c.execute("""SELECT date(time_updated/1000,'unixepoch','localtime'),
                             COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0),
+                            COALESCE(SUM(tokens_reasoning),0),
                             COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0)
-                     FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (month_ms,))
-        oc_daily_bd = {r[0]: {"i": r[1], "o": r[2], "cr": r[3], "cw": r[4]} for r in c.fetchall()}
+                     FROM session WHERE time_archived IS NULL AND time_updated>=? GROUP BY 1""", (since_ms,))
+        daily_bd = {r[0]: {"i": r[1], "o": r[2], "r": r[3], "cr": r[4], "cw": r[5]} for r in c.fetchall()}
 
+        result = {
+            "today": today, "week": week, "total": total,
+            "today_sess": t_sess, "all_sess": a_sess,
+            "daily": daily, "models": models,
+            "models_1d": mq(day_ms), "models_7d": mq(week_ms), "models_1m": mq(month_ms),
+            "model_costs": model_costs,
+            "model_costs_1d": mcq(day_ms), "model_costs_7d": mcq(week_ms), "model_costs_1m": mcq(month_ms),
+            "cost_today": cost_today, "cost_all": cost_all,
+            "daily_cost": daily_cost_raw,
+            "breakdown_today": bd_today, "daily_breakdown": daily_bd,
+        }
         con.close()
-        return {"today": today, "week": week, "total": total,
-                "today_sess": t_sess, "all_sess": a_sess,
-                "daily": daily, "models": models,
-                "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
-                "model_costs": oc_model_costs, "model_costs_1d": oc_model_costs_1d,
-                "model_costs_7d": oc_model_costs_7d, "model_costs_1m": oc_model_costs_1m,
-                "cost_today": cost_today, "cost_all": cost_all, "cost_exact": cost_exact,
-                "daily_cost": daily_cost_raw,
-                "breakdown_today": oc_bd_today, "daily_breakdown": oc_daily_bd}
+        return result
     except Exception:
+        return None
+
+
+def fetch_opencode(day_ms, week_ms, month_ms, since_ms=None):
+    # Read both DBs (stable + dev) and merge
+    stable = _oc_read_db(OC_DB, day_ms, week_ms, month_ms, since_ms)
+    dev    = _oc_read_db(OC_DB_DEV, day_ms, week_ms, month_ms, since_ms)
+
+    if stable is None and dev is None:
         return {"today": 0, "week": 0, "total": 0,
                 "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
                 "models_1d": {}, "models_7d": {}, "models_1m": {},
@@ -463,12 +604,169 @@ def fetch_opencode(day_ms, week_ms, month_ms):
                 "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False, "daily_cost": {},
                 "breakdown_today": {}, "daily_breakdown": {}}
 
+    # Use whichever DB is available
+    d = dev if dev is not None else stable
+
+    # Merge the second DB if present
+    other = stable if dev is not None and stable is not None else None
+    if other is not None:
+        d["today"]      += other["today"]
+        d["week"]       += other["week"]
+        d["total"]      += other["total"]
+        d["today_sess"] += other["today_sess"]
+        d["all_sess"]   += other["all_sess"]
+        for k, v in other["daily"].items():
+            d["daily"][k] = d["daily"].get(k, 0) + v
+        for k, v in other["models"].items():
+            d["models"][k] = d["models"].get(k, 0) + v
+        for key in ("models_1d", "models_7d", "models_1m"):
+            for k, v in other[key].items():
+                d[key][k] = d[key].get(k, 0) + v
+        for key in ("model_costs", "model_costs_1d", "model_costs_7d", "model_costs_1m"):
+            for k, v in other[key].items():
+                d[key][k] = d[key].get(k, 0.0) + v
+        d["cost_today"] += other["cost_today"]
+        d["cost_all"]   += other["cost_all"]
+        for k, v in other["daily_cost"].items():
+            d["daily_cost"][k] = d["daily_cost"].get(k, 0.0) + v
+        for k in d["breakdown_today"]:
+            d["breakdown_today"][k] += other["breakdown_today"].get(k, 0)
+        for day_key, bd in other["daily_breakdown"].items():
+            if day_key not in d["daily_breakdown"]:
+                d["daily_breakdown"][day_key] = bd
+            else:
+                for k in bd:
+                    d["daily_breakdown"][day_key][k] = d["daily_breakdown"][day_key].get(k, 0) + bd[k]
+
+    cost_exact = True
+    if d["cost_all"] == 0 and d["total"] > 0:
+        d["cost_all"]   = sum(estimate_cost(m, t) for m, t in d["models"].items())
+        d["cost_today"] = d["cost_all"] * d["today"] / d["total"] if d["total"] > 0 else 0.0
+        d["daily_cost"] = {day: d["cost_all"] * t / d["total"] for day, t in d["daily"].items()} if d["total"] > 0 else {}
+        for key in ("model_costs", "model_costs_1d", "model_costs_7d", "model_costs_1m"):
+            src = {1: "models_1d", 7: "models_7d", 30: "models_1m"}.get(
+                {"model_costs": 0, "model_costs_1d": 1, "model_costs_7d": 7, "model_costs_1m": 30}[key], "models")
+            src_dict = d[src] if src == "models" else d[src]
+            d[key] = {m: estimate_cost(m, t) for m, t in src_dict.items()}
+        cost_exact = False
+
+    d["cost_exact"] = cost_exact
+
+    # Include tokens from workflow agent sessions not yet in the DB
+    wf_tokens = fetch_opencode_workflow_tokens()
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    if wf_tokens:
+        wf_total = sum(w["total"] for w in wf_tokens.values())
+        d["total"] += wf_total
+        d["week"]  += wf_total
+        for wf_id, wf_data in wf_tokens.items():
+            wf_day = datetime.fromtimestamp(wf_data["created_ms"] / 1000).strftime("%Y-%m-%d")
+            d["daily"][wf_day] = d["daily"].get(wf_day, 0) + wf_data["total"]
+            if wf_day == today_date:
+                d["today"] += wf_data["total"]
+            wf_cost = wf_data["total"] * 0.18 / 1_000_000
+            d["daily_cost"][wf_day] = d["daily_cost"].get(wf_day, 0.0) + wf_cost
+            d["cost_all"] += wf_cost
+            if wf_day == today_date:
+                d["cost_today"] += wf_cost
+        d["models"]["deepseek-v4-flash"] = d["models"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_1d"]["deepseek-v4-flash"] = d["models_1d"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_7d"]["deepseek-v4-flash"] = d["models_7d"].get("deepseek-v4-flash", 0) + wf_total
+        d["models_1m"]["deepseek-v4-flash"] = d["models_1m"].get("deepseek-v4-flash", 0) + wf_total
+
+    return d
+
+
+# ── Codex ────────────────────────────────────────────────────────────────────
+
+def fetch_codex(day_ms, week_ms, month_ms, since_ms=None):
+    if since_ms is None:
+        since_ms = month_ms
+    if not CODEX_DB.exists():
+        return {"today": 0, "week": 0, "total": 0,
+                "today_sess": 0, "all_sess": 0,
+                "daily": {}, "models": {},
+                "models_1d": {}, "models_7d": {}, "models_1m": {},
+                "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False,
+                "daily_cost": {},
+                "breakdown_today": {}, "daily_breakdown": {}}
+    try:
+        con = sqlite3.connect(f"file:{CODEX_DB}?mode=ro", uri=True)
+        c = con.cursor()
+
+        def one(q, *a):
+            c.execute(q, a); return c.fetchone()[0] or 0
+
+        today  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
+        week   = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0 AND updated_at_ms>=?", week_ms)
+        total  = one("SELECT COALESCE(SUM(tokens_used),0) FROM threads WHERE archived=0")
+        t_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0 AND updated_at_ms>=?", day_ms)
+        a_sess = one("SELECT COUNT(*) FROM threads WHERE archived=0")
+
+        c.execute("""SELECT date(updated_at_ms/1000,'unixepoch','localtime'),
+                            COALESCE(SUM(tokens_used),0)
+                     FROM threads WHERE archived=0 AND updated_at_ms>=? GROUP BY 1""", (since_ms,))
+        daily = {r[0]: r[1] for r in c.fetchall()}
+
+        c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
+                     FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                     GROUP BY model ORDER BY 2 DESC""")
+        models = {}
+        for r in c.fetchall():
+            m = r[0]
+            if is_excluded(m): continue
+            models[m] = models.get(m, 0) + r[1]
+
+        # Codex does not store cost in the DB — estimate from BLENDED_RATES / CLAUDE_PRICING
+        cost_all   = sum(estimate_cost(m, t) for m, t in models.items())
+        cost_today = cost_all * today / total if total > 0 else 0.0
+        daily_cost = {d: cost_all * t / total for d, t in daily.items()} if total > 0 else {}
+
+        def mq(since):
+            c.execute("""SELECT model, COALESCE(SUM(tokens_used),0)
+                         FROM threads WHERE archived=0 AND model IS NOT NULL AND model != ''
+                         AND updated_at_ms>=? GROUP BY model ORDER BY 2 DESC""", (since,))
+            return {r[0]: r[1] for r in c.fetchall() if not is_excluded(r[0])}
+
+        models_1d = mq(day_ms)
+        models_7d = mq(week_ms)
+        models_1m = mq(month_ms)
+
+        model_costs    = {m: estimate_cost(m, t) for m, t in models.items()}
+        model_costs_1d = {m: estimate_cost(m, t) for m, t in models_1d.items()}
+        model_costs_7d = {m: estimate_cost(m, t) for m, t in models_7d.items()}
+        model_costs_1m = {m: estimate_cost(m, t) for m, t in models_1m.items()}
+
+        con.close()
+
+        return {"today": today, "week": week, "total": total,
+                "today_sess": t_sess, "all_sess": a_sess,
+                "daily": daily, "models": models,
+                "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
+                "model_costs": model_costs, "model_costs_1d": model_costs_1d,
+                "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
+                "cost_today": cost_today, "cost_all": cost_all, "cost_exact": False,
+                "daily_cost": daily_cost,
+                "breakdown_today": {"input": today // 2, "output": today - today // 2},
+                "daily_breakdown": {d: {"i": t // 2, "o": t - t // 2} for d, t in daily.items()}}
+    except Exception:
+        return {"today": 0, "week": 0, "total": 0,
+                "today_sess": 0, "all_sess": 0, "daily": {}, "models": {},
+                "models_1d": {}, "models_7d": {}, "models_1m": {},
+                "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+                "cost_today": 0.0, "cost_all": 0.0, "cost_exact": False,
+                "daily_cost": {},
+                "breakdown_today": {}, "daily_breakdown": {}}
+
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
 
-def fetch_claude_code(day_s, week_s, month_s):
+def fetch_claude_code(day_s, week_s, month_s, since_s=None):
     global _cc_cache
     now = time.time()
+    if since_s is None:
+        since_s = month_s
     if now - _cc_cache["ts"] < 30 and _cc_cache["data"]:
         return _cc_cache["data"]
 
@@ -489,7 +787,7 @@ def fetch_claude_code(day_s, week_s, month_s):
     for jf in CC_DIR.rglob("*.jsonl"):
         try: mtime = jf.stat().st_mtime
         except: continue
-        if mtime < START_S: continue
+        if mtime < since_s: continue
 
         try:
             with open(jf, encoding="utf-8", errors="ignore") as f:
@@ -512,6 +810,7 @@ def fetch_claude_code(day_s, week_s, month_s):
                         is_today = event_ts >= day_s
                         is_week  = event_ts >= week_s
                         in_month = event_ts >= month_s
+                        in_all   = event_ts >= since_s
                         i_tok  = usage.get("input_tokens", 0)
                         o_tok  = usage.get("output_tokens", 0)
                         c_writ = usage.get("cache_creation_input_tokens", 0)
@@ -536,10 +835,11 @@ def fetch_claude_code(day_s, week_s, month_s):
                             models_7d[m]      = models_7d.get(m, 0) + tok
                             model_costs_7d[m] = model_costs_7d.get(m, 0.0) + est
                         if in_month:
-                            daily[fdate]      = daily.get(fdate, 0) + tok
-                            daily_cost[fdate] = daily_cost.get(fdate, 0.0) + est
                             models_1m[m]      = models_1m.get(m, 0) + tok
                             model_costs_1m[m] = model_costs_1m.get(m, 0.0) + est
+                        if in_all:
+                            daily[fdate]      = daily.get(fdate, 0) + tok
+                            daily_cost[fdate] = daily_cost.get(fdate, 0.0) + est
                             daily_inp[fdate]  = daily_inp.get(fdate, 0) + i_tok
                             daily_out[fdate]  = daily_out.get(fdate, 0) + o_tok
                             daily_cr_d[fdate] = daily_cr_d.get(fdate, 0) + c_read
@@ -570,17 +870,20 @@ def _top(models: dict) -> str:
 
 def fetch():
     now_dt   = datetime.now()
-    day_s    = max(now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), START_S)
-    week_s   = max(day_s  - 6  * 86400, START_S)
-    month_s  = max(day_s  - 29 * 86400, START_S)
+    day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    week_s   = day_s  - 6  * 86400
+    month_s  = day_s  - 29 * 86400
+    since_s  = min(month_s, START_S)
     day_ms   = int(day_s   * 1000)
     week_ms  = int(week_s  * 1000)
     month_ms = int(month_s * 1000)
+    since_ms = int(since_s * 1000)
 
-    oc = fetch_opencode(day_ms, week_ms, month_ms)
-    cc = fetch_claude_code(day_s, week_s, month_s)
+    oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
+    cc = fetch_claude_code(day_s, week_s, month_s, since_s)
+    cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
 
-    elapsed_h = max(0.5, (time.time() - max(day_s, START_S)) / 3600)
+    elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
     ds_balance = fetch_deepseek_balance_cached()
 
@@ -594,15 +897,15 @@ def fetch():
 
     all_models      = {}
     all_models_today = {}
-    for src in (oc["models"], cc["models"]):
+    for src in (oc["models"], cc["models"], cx["models"]):
         for k, v in src.items():
             all_models[k] = all_models.get(k, 0) + v
-    for src in (oc.get("models_1d", {}), cc.get("models_1d", {})):
+    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {})):
         for k, v in src.items():
             all_models_today[k] = all_models_today.get(k, 0) + v
 
     def merge_bd_today(*srcs):
-        r = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        r = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
         for s in srcs:
             for k in r:
                 r[k] += s.get(k, 0)
@@ -611,7 +914,7 @@ def fetch():
     def merge_daily_bd(*srcs):
         dates = set().union(*(s.keys() for s in srcs))
         return {d: {k: sum(s.get(d, {}).get(k, 0) for s in srcs)
-                    for k in ("i", "o", "cr", "cw")}
+                    for k in ("i", "o", "r", "cr", "cw")}
                 for d in dates}
 
     limits = fetch_claude_limits_cached()
@@ -619,22 +922,24 @@ def fetch():
     return {
         "limits": limits,
         "all": {
-            "today_tok":  oc["today"] + cc["today"],
-            "week_tok":   oc["week"]  + cc["week"],
-            "all_tok":    oc["total"] + cc["total"],
+            "today_tok":  oc["today"] + cc["today"] + cx["today"],
+            "week_tok":   oc["week"]  + cc["week"]  + cx["week"],
+            "all_tok":    oc["total"] + cc["total"] + cx["total"],
             "today_sess": None,
             "all_sess":   None,
             "top_model":  _top(all_models),
             "top_model_today": _top(all_models_today),
-            "daily":      merged_daily(oc["daily"], cc["daily"]),
-            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"]),
-            "cost_today": oc["cost_today"] + cc["cost_today"],
-            "cost_all":   oc["cost_all"]   + cc["cost_all"],
+            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"]),
+            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"]),
+            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
+            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
             "cost_exact": False,
             "breakdown_today": merge_bd_today(cc.get("breakdown_today", {}),
-                                              oc.get("breakdown_today", {})),
+                                              oc.get("breakdown_today", {}),
+                                              cx.get("breakdown_today", {})),
             "daily_breakdown": merge_daily_bd(cc.get("daily_breakdown", {}),
-                                              oc.get("daily_breakdown", {})),
+                                              oc.get("daily_breakdown", {}),
+                                              cx.get("daily_breakdown", {})),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
@@ -669,22 +974,40 @@ def fetch():
             "breakdown_today": oc.get("breakdown_today", {}),
             "daily_breakdown": oc.get("daily_breakdown", {}),
         },
+        "codex": {
+            "today_tok":  cx["today"],
+            "week_tok":   cx["week"],
+            "all_tok":    cx["total"],
+            "today_sess": cx["today_sess"],
+            "all_sess":   cx["all_sess"],
+            "top_model":  _top(cx.get("models_1m") or cx["models"]),
+            "daily":      daily_list(cx["daily"]),
+            "daily_cost": daily_cost_list(cx["daily_cost"]),
+            "cost_today": cx["cost_today"],
+            "cost_all":   cx["cost_all"],
+            "cost_exact": cx.get("cost_exact", False),
+            "breakdown_today": cx.get("breakdown_today", {}),
+            "daily_breakdown": cx.get("daily_breakdown", {}),
+        },
     }
 
 
 def fetch_all_models():
     now_dt   = datetime.now()
-    day_s    = max(now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), START_S)
-    week_s   = max(day_s - 6  * 86400, START_S)
-    month_s  = max(day_s - 29 * 86400, START_S)
+    day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    week_s   = day_s - 6  * 86400
+    month_s  = day_s - 29 * 86400
+    since_s  = min(month_s, START_S)
     day_ms   = int(day_s   * 1000)
     week_ms  = int(week_s  * 1000)
     month_ms = int(month_s * 1000)
+    since_ms = int(since_s * 1000)
 
-    oc = fetch_opencode(day_ms, week_ms, month_ms)
-    cc = fetch_claude_code(day_s, week_s, month_s)
+    oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
+    cc = fetch_claude_code(day_s, week_s, month_s, since_s)
+    cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
 
-    def make_rows(oc_m, oc_mc, cc_m, cc_mc):
+    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc):
         rows = []
         for name, tok in oc_m.items():
             cost = oc_mc.get(name, estimate_cost(name, tok))
@@ -692,13 +1015,16 @@ def fetch_all_models():
         for name, tok in cc_m.items():
             cost = cc_mc.get(name, estimate_cost(name, tok))
             rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Claude Code"})
+        for name, tok in cx_m.items():
+            cost = cx_mc.get(name, estimate_cost(name, tok))
+            rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Codex"})
         return sorted(rows, key=lambda x: -x["tokens"])
 
     return {
-        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"]),
-        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"]),
-        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"]),
-        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"]),
+        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"]),
+        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"]),
+        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"]),
+        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"]),
     }
 
 
@@ -708,7 +1034,7 @@ MAIN_HTML = """\
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:340px;background:#1c1c1e;color:#fff;
+html,body{width:360px;background:#1c1c1e;color:#fff;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
   overflow:hidden;-webkit-font-smoothing:antialiased}
 
@@ -744,7 +1070,7 @@ canvas{display:block;width:100%}
 .chart-style-btn:hover{color:rgba(255,255,255,.55)}
 #tip,#tip2{position:fixed;background:rgba(22,22,24,.97);border:1px solid rgba(255,255,255,.13);
   border-radius:6px;padding:5px 9px;font-size:11px;color:rgba(255,255,255,.88);
-  pointer-events:none;display:none;white-space:nowrap;z-index:100;transform:translateX(-50%)}
+  pointer-events:none;display:none;white-space:nowrap;z-index:100}
 .chart-divider{padding:6px 20px 0;font-size:9px;color:rgba(255,255,255,.22);
   text-transform:uppercase;letter-spacing:.06em}
 
@@ -755,19 +1081,19 @@ canvas{display:block;width:100%}
 .models-lnk:hover{color:rgba(255,255,255,.55)}
 
 /* breakdown */
-.bd-section{padding:6px 20px 4px;border-top:1px solid rgba(255,255,255,.06)}
-.bd-title{font-size:9px;text-transform:uppercase;letter-spacing:.06em;
-  color:rgba(255,255,255,.22);margin-bottom:6px}
-.bd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
-.bd-cell .bd-lbl{font-size:10px;color:rgba(255,255,255,.38)}
-.bd-cell .bd-val{font-size:13px;font-weight:600;letter-spacing:-.4px}
-#bd-in{color:#60a5fa}
-#bd-out{color:#34d399}
-#bd-cr{color:#fbbf24}
-#bd-cw{color:#a78bfa}
-.bd-metrics{display:flex;gap:18px;margin-top:7px;font-size:11px;color:rgba(255,255,255,.4)}
-.bd-metrics b{color:rgba(255,255,255,.82);font-weight:600}
-.bd-hit-good{color:#4ade80!important}
+.perf-section{padding:8px 16px 6px;border-top:1px solid rgba(255,255,255,.06)}
+.perf-title{font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+  color:rgba(255,255,255,.2);margin-bottom:7px}
+.perf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.perf-cell{background:rgba(255,255,255,.04);border-radius:7px;padding:6px 9px}
+.perf-lbl{font-size:9px;color:rgba(255,255,255,.3);margin-bottom:2px;letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-val{font-size:15px;font-weight:700;letter-spacing:-.5px;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-sub{font-size:9px;color:rgba(255,255,255,.18);margin-top:1px}
+.perf-up{color:#4ade80}
+.perf-dn{color:#f87171}
+.perf-neu{color:rgba(255,255,255,.7)}
 .ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
 .ds-row span{color:rgba(255,255,255,.72)}
 /* quota bar */
@@ -803,6 +1129,12 @@ canvas{display:block;width:100%}
 .lim-bar-sub{display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,.25)}
 .lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
 .lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
+.lim-ds-row{display:flex;justify-content:space-between;align-items:baseline;
+  padding:10px 0 0;border-top:1px solid rgba(255,255,255,.06);margin-top:4px}
+.lim-ds-label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+  color:rgba(255,255,255,.38)}
+.lim-ds-val{font-size:22px;font-weight:700;letter-spacing:-.6px;color:#4ade80}
+.lim-ds-cur{font-size:11px;font-weight:500;color:rgba(255,255,255,.3);margin-left:3px}
 .btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
@@ -811,7 +1143,8 @@ canvas{display:block;width:100%}
   <div class="tab active" data-tab="all"         onclick="switchTab('all')">All</div>
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
-  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Limites</div>
+  <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
+  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -847,20 +1180,42 @@ canvas{display:block;width:100%}
   <span class="models-lnk" onclick="act('models')">All models &#x2192;</span>
 </div>
 
-<div id="bd-section" class="bd-section" style="display:none">
-  <div class="bd-title">Today's breakdown</div>
-  <div class="bd-grid">
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#60a5fa">●</span> Input</div><div class="bd-val" id="bd-in">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#34d399">●</span> Output</div><div class="bd-val" id="bd-out">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#fbbf24">●</span> Cache R</div><div class="bd-val" id="bd-cr">—</div></div>
-    <div class="bd-cell"><div class="bd-lbl"><span style="color:#a78bfa">●</span> Cache W</div><div class="bd-val" id="bd-cw">—</div></div>
-  </div>
-  <div class="bd-metrics">
-    <span>Cache hit: <b id="bd-hit">—</b></span>
-    <span>Tok/hr: <b id="bd-tph">—</b></span>
+<div id="perf-section" class="perf-section" style="display:none">
+  <div class="perf-title">Vitesse &amp; efficacité</div>
+  <div class="perf-grid">
+    <div class="perf-cell">
+      <div class="perf-lbl">Rythme</div>
+      <div class="perf-val perf-neu" id="pf-tph">—</div>
+      <div class="perf-sub">tok / hr</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Cache hit</div>
+      <div class="perf-val" id="pf-hit">—</div>
+      <div class="perf-sub">% lectures</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Coût / 1M</div>
+      <div class="perf-val perf-neu" id="pf-rate">—</div>
+      <div class="perf-sub">taux effectif</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">vs moy. 7j</div>
+      <div class="perf-val" id="pf-vs7">—</div>
+      <div class="perf-sub">comparaison</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Projection</div>
+      <div class="perf-val perf-neu" id="pf-proj">—</div>
+      <div class="perf-sub">fin de jour</div>
+    </div>
+    <div class="perf-cell">
+      <div class="perf-lbl">Top modèle</div>
+      <div class="perf-val perf-neu" id="pf-model">—</div>
+      <div class="perf-sub">aujourd'hui</div>
+    </div>
   </div>
 </div>
-<div id="ds-row" class="ds-row" style="display:none">DeepSeek: <span id="ds-bal">—</span></div>
+
 
 <div id="quota-row" class="quota-row" style="display:none">
   <div class="quota-header">
@@ -885,7 +1240,8 @@ canvas{display:block;width:100%}
   <div class="tab"  data-tab="all"         onclick="switchTab('all')">All</div>
   <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
-  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Limites</div>
+  <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
+  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -917,10 +1273,11 @@ const STYLES        = ['bars', 'line', 'area'];
 const BD_COLORS = {
   cr: {hex:'#fbbf24', rgba:'rgba(251,191,36,'},
   i:  {hex:'#60a5fa', rgba:'rgba(96,165,250,'},
+  r:  {hex:'#f472b6', rgba:'rgba(244,114,182,'},
   cw: {hex:'#a78bfa', rgba:'rgba(167,139,250,'},
   o:  {hex:'#34d399', rgba:'rgba(52,211,153,'},
 };
-const BD_ORDER = ['cr','i','cw','o'];
+const BD_ORDER = ['cr','i','r','cw','o'];
 
 function fmt(n){
   if(!n)return'0';
@@ -955,6 +1312,9 @@ function renderTab(tab) {
   const s = __data[tab];
   if (!s) return;
   document.getElementById('v-today').textContent = fmt(s.today_tok);
+  const _elH=(Date.now()-new Date().setHours(0,0,0,0))/3600000;
+  const _todayLbl=_elH<23.5?'Today · '+(_elH<1?Math.round(_elH*60)+'m':(_elH<10?_elH.toFixed(1)+'h':Math.round(_elH)+'h')):'Today';
+  document.getElementById('v-today').previousElementSibling.textContent=_todayLbl;
   document.getElementById('v-week').textContent  = fmt(s.week_tok);
   document.getElementById('v-all').textContent   = fmt(s.all_tok);
   const sessEl  = document.getElementById('stat-sess');
@@ -977,50 +1337,60 @@ function renderTab(tab) {
   drawChart(s.daily || []);
   drawCostChart(s.daily_cost || []);
 
-  // Token breakdown (All + Claude tabs only)
+  // Vitesse & efficacité
   const bd = s.breakdown_today;
-  const bdSec = document.getElementById('bd-section');
-  if (bd && (bd.input || bd.output || bd.cache_read || bd.cache_write)) {
-    bdSec.style.display = '';
-    document.getElementById('bd-in').textContent  = fmt(bd.input || 0);
-    document.getElementById('bd-out').textContent = fmt(bd.output || 0);
-    document.getElementById('bd-cr').textContent  = fmt(bd.cache_read || 0);
-    document.getElementById('bd-cw').textContent  = fmt(bd.cache_write || 0);
-    const inputSide = (bd.input || 0) + (bd.cache_read || 0) + (bd.cache_write || 0);
-    const hitPct = inputSide > 0 ? Math.round((bd.cache_read || 0) / inputSide * 100) : 0;
-    const hitEl = document.getElementById('bd-hit');
-    hitEl.textContent = hitPct + '%';
-    hitEl.className = hitPct >= 80 ? 'bd-hit-good' : '';
-    document.getElementById('bd-tph').textContent = s.tok_per_hour ? fmt(s.tok_per_hour) : '—';
+  const perfSec = document.getElementById('perf-section');
+  if (s.today_tok > 0) {
+    perfSec.style.display = '';
+    // Rythme
+    document.getElementById('pf-tph').textContent = s.tok_per_hour ? fmt(s.tok_per_hour) : '—';
+    // Cache hit
+    const hitEl = document.getElementById('pf-hit');
+    if (bd && (bd.input || bd.cache_read)) {
+      const inputSide = (bd.input||0)+(bd.cache_read||0)+(bd.cache_write||0);
+      const hitPct = inputSide>0 ? Math.round((bd.cache_read||0)/inputSide*100) : 0;
+      hitEl.textContent = hitPct+'%';
+      hitEl.className = 'perf-val '+(hitPct>=80?'perf-up':hitPct>=50?'perf-neu':'perf-dn');
+    } else { hitEl.textContent='—'; hitEl.className='perf-val perf-neu'; }
+    // Coût / 1M tokens
+    const rateEl = document.getElementById('pf-rate');
+    if (s.cost_today>0 && s.today_tok>0) {
+      rateEl.textContent = '$'+(s.cost_today/s.today_tok*1e6).toFixed(2);
+    } else { rateEl.textContent='—'; }
+    // vs moy. 7j
+    const vs7El = document.getElementById('pf-vs7');
+    const daily7 = (s.daily||[]).slice(-7);
+    if (daily7.length>=2) {
+      const avg7 = daily7.slice(0,-1).reduce(function(a,d){return a+(d.tokens||0);},0)/(daily7.length-1||1);
+      if (avg7>0) {
+        const ratio = (s.today_tok/avg7-1)*100;
+        const sign = ratio>=0?'+':'';
+        vs7El.textContent = sign+Math.round(ratio)+'%';
+        vs7El.className = 'perf-val '+(ratio>=10?'perf-up':ratio<=-10?'perf-dn':'perf-neu');
+      } else { vs7El.textContent='—'; vs7El.className='perf-val perf-neu'; }
+    } else { vs7El.textContent='—'; vs7El.className='perf-val perf-neu'; }
+    // Projection fin de jour
+    const projEl = document.getElementById('pf-proj');
+    const elH=(Date.now()-new Date().setHours(0,0,0,0))/3600000;
+    if (s.cost_today>0 && elH>0.08) {
+      const proj = s.cost_today/elH*24;
+      projEl.textContent = '$'+proj.toFixed(2);
+    } else { projEl.textContent='—'; }
+    // Top modèle
+    const modelEl = document.getElementById('pf-model');
+    const mName = (s.top_model_today||s.top_model||'—');
+    const mShort = mName.replace(/^claude-/,'').replace(/-(202\d.*)$/,'').replace(/^[^\/]+\//,'').replace(/-/g,' ');
+    modelEl.textContent = mShort.length>16 ? mShort.slice(0,15)+'…' : mShort;
   } else {
-    bdSec.style.display = 'none';
+    perfSec.style.display = 'none';
   }
 
-  // DeepSeek balance (All tab only)
-  const dsRow = document.getElementById('ds-row');
-  if (s.ds_balance) {
-    const infos = s.ds_balance.balance_infos || [];
-    const usd = infos.find(function(x){return x.currency==='USD';});
-    const cny = infos.find(function(x){return x.currency==='CNY';});
-    const info = usd || cny;
-    if (info) {
-      const bal = parseFloat(info.total_balance || 0);
-      const sym = info.currency === 'USD' ? '$' : '¥';
-      document.getElementById('ds-bal').textContent =
-        sym + bal.toFixed(2) + ' (' + info.currency + ')';
-      dsRow.style.display = '';
-    } else {
-      dsRow.style.display = 'none';
-    }
-  } else {
-    dsRow.style.display = 'none';
-  }
 }
 
 function filterByPeriod(daily) {
   if (!daily || !daily.length) return daily;
-  if (__chartPeriod === '1m' || __chartPeriod === 'all') return daily;
-  const n = __chartPeriod === '1d' ? 1 : 7;
+  if (__chartPeriod === 'all') return daily;
+  const n = __chartPeriod === '1d' ? 1 : __chartPeriod === '7d' ? 7 : 30;
   return daily.slice(-n);
 }
 
@@ -1161,7 +1531,7 @@ function buildTipHtml(hit) {
     const v = bd[key]||0; if (!v) return '';
     const pct = Math.round(v/total*100);
     const col = BD_COLORS[key].hex;
-    const label = {cr:'Cache R',i:'Input',cw:'Cache W',o:'Output'}[key];
+    const label = {cr:'Cache R',i:'Input',r:'Reasoning',cw:'Cache W',o:'Output'}[key];
     return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px">'
       +'<span><span style="color:'+col+'">●</span>&nbsp;'+label+'</span>'
       +'<span style="color:rgba(255,255,255,.7)">'+fmt(v)+'&nbsp;<span style="opacity:.45">'+pct+'%</span></span>'
@@ -1200,8 +1570,9 @@ function drawCostChart(daily) {
           tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
         }
         tip.style.display='block';
-        const th=tip.offsetHeight||22;
-        tip.style.left=e.clientX+'px';
+        const th=tip.offsetHeight||22,tipW=tip.offsetWidth||160,winW=360;
+        const left=Math.max(4,Math.min(e.clientX-tipW/2,winW-tipW-4));
+        tip.style.left=left+'px';
         tip.style.top=Math.max(4,e.clientY-th-10)+'px';
       }else{tip.style.display='none';}
     });
@@ -1242,6 +1613,7 @@ function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
   if(d.limits != null){__limitsData = d.limits;}
+  if(d.git_heatmap != null){__gitHeatmap = d.git_heatmap;}
   if(__onLimitsPage){
     renderLimits();
   } else {
@@ -1274,10 +1646,138 @@ function setColor(hex){
   act('saveSettings',JSON.stringify(__settings));
 }
 
-// ── Limites ──────────────────────────────────────────────────────────────────
+// ── Heatmap GitHub ───────────────────────────────────────────────────────────
 
 let __limitsData = null;
 let __onLimitsPage = false;
+let __gitHeatmap = {};
+
+function drawContribHeatmap() {
+  var canvas = document.getElementById('contrib-canvas');
+  if (!canvas) return;
+  var heatmap = __gitHeatmap || {};
+  var dpr = window.devicePixelRatio || 1;
+
+  // Disposition : 7 colonnes (Lun→Dim) × N lignes (semaines du mois)
+  // → remplit la largeur et forme approximativement un carré
+  var totalW = 312;
+  var step   = Math.floor(totalW / 7);   // 44px
+  var cell   = step - 4;                 // 40px
+  var topPad = 26;  // labels jours
+  var legH   = 24;
+
+  var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
+              'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  var joursNom = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+
+  // Bornes du mois courant, alignées sur la semaine (lundi=premier jour)
+  var today = new Date(); today.setHours(0,0,0,0);
+  var firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  var lastOfMonth  = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  var startDow = (firstOfMonth.getDay() + 6) % 7; // 0=lun
+  var endDow   = (lastOfMonth.getDay()  + 6) % 7;
+  var start = new Date(firstOfMonth); start.setDate(start.getDate() - startDow);
+  var end   = new Date(lastOfMonth);  if (endDow < 6) end.setDate(end.getDate() + (6 - endDow));
+  var numWeeks = Math.round((end - start) / 604800000) + 1;
+
+  var H = topPad + numWeeks * step + legH;
+  canvas.width  = totalW * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = totalW + 'px';
+  canvas.style.height = H + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
+  function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
+
+  // Labels jours (Lu Ma Me Je Ve Sa Di) centrés sur chaque colonne
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ['Lu','Ma','Me','Je','Ve','Sa','Di'].forEach(function(lbl, i) {
+    ctx.fillText(lbl, i * step + step / 2, 15);
+  });
+
+  // Nom du mois en haut à droite
+  ctx.font = '11px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.fillText(mois[today.getMonth()] + ' ' + today.getFullYear(), totalW, 15);
+
+  // Grille : row = semaine, col = jour de semaine (0=lun, 6=dim)
+  var d = new Date(start);
+  for (var row = 0; row < numWeeks; row++) {
+    for (var col = 0; col < 7; col++) {
+      var inMonth = d.getMonth() === today.getMonth();
+      var isFuture = d > today;
+      var ds = d.getFullYear() + '-'
+        + String(d.getMonth()+1).padStart(2,'0') + '-'
+        + String(d.getDate()).padStart(2,'0');
+      var c = heatmap[ds] || 0;
+      ctx.fillStyle = (!inMonth || isFuture) ? 'rgba(33,38,45,0.35)' : colors[lvl(c)];
+      var x = col * step;
+      var y = topPad + row * step;
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 4); }
+      else { ctx.rect(x, y, cell, cell); }
+      ctx.fill();
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Légende Less / More
+  var legY = topPad + numWeeks * step + 16;
+  var legX = totalW - 5 * 16;
+  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,.32)';
+  ctx.fillText('Less', legX - 4, legY);
+  colors.forEach(function(col, i) {
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(legX + i*16, legY - 11, 12, 12, 2); }
+    else { ctx.rect(legX + i*16, legY - 11, 12, 12); }
+    ctx.fill();
+  });
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,.32)';
+  ctx.fillText('More', legX + 5*16 + 2, legY);
+
+  // Tooltip
+  var tip = document.getElementById('contrib-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'contrib-tip';
+    tip.style.cssText = 'position:fixed;display:none;background:#1c2128;'
+      + 'border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:6px 10px;'
+      + 'font-size:11px;color:rgba(255,255,255,.85);pointer-events:none;z-index:999;'
+      + 'white-space:nowrap;line-height:1.5;box-shadow:0 4px 12px rgba(0,0,0,.5)';
+    document.body.appendChild(tip);
+  }
+
+  canvas.onmousemove = function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var col = Math.floor(mx / step);
+    var row = Math.floor((my - topPad) / step);
+    if (col < 0 || col >= 7 || row < 0 || row >= numWeeks) { tip.style.display='none'; return; }
+    if (mx < col*step || mx > col*step+cell || my < topPad+row*step || my > topPad+row*step+cell) { tip.style.display='none'; return; }
+    var dd = new Date(start); dd.setDate(dd.getDate() + row*7 + col);
+    if (dd > today || dd.getMonth() !== today.getMonth()) { tip.style.display='none'; return; }
+    var ds = dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0');
+    var cnt = heatmap[ds] || 0;
+    var label = cnt === 0 ? 'Aucune contribution' : cnt === 1 ? '1 contribution' : cnt + ' contributions';
+    var dateStr = joursNom[dd.getDay()] + ' ' + dd.getDate() + ' ' + mois[dd.getMonth()];
+    tip.innerHTML = '<strong>' + label + '</strong><br><span style="opacity:.55">' + dateStr + '</span>';
+    var tx = e.clientX + 10, ty = e.clientY - 40;
+    if (tx + 160 > window.innerWidth) tx = e.clientX - 170;
+    if (ty < 0) ty = e.clientY + 14;
+    tip.style.left = tx + 'px'; tip.style.top = ty + 'px'; tip.style.display = 'block';
+  };
+  canvas.onmouseleave = function() { tip.style.display = 'none'; };
+}
 
 function switchToLimits() {
   __onLimitsPage = true;
@@ -1297,40 +1797,116 @@ function barColor(pct) {
   return '#4ade80';
 }
 
-function renderLimBar(name, usedPct, resetStr) {
+let __countdownTimers = [];
+
+function clearCountdowns() {
+  __countdownTimers.forEach(function(id) { clearInterval(id); });
+  __countdownTimers = [];
+}
+
+function renderLimBar(name, usedPct, resetStr, resetTs) {
   const used = usedPct != null ? usedPct : 0;
   const color = barColor(used);
+  const exhausted = used >= 100;
+  const numId = 'lim-num-' + name.toLowerCase().replace(/\s+/g, '-');
   return '<div class="lim-bar">' +
     '<div class="lim-bar-top">' +
       '<span class="lim-bar-name">' + name + '</span>' +
-      '<span class="lim-bar-num" style="color:' + color + '">' + used + '%</span>' +
+      '<span class="lim-bar-num" id="' + numId + '" style="color:' + color + '">' +
+        (exhausted && resetTs ? '&#x2026;' : used + '%') +
+      '</span>' +
     '</div>' +
     '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
     '<div class="lim-bar-sub">' +
-      '<span>' + used + '% utilis&#233;</span>' +
+      '<span>' + (exhausted ? 'Limite atteinte' : used + '% utilis&#233;') + '</span>' +
       (resetStr ? '<span>Reset ' + resetStr + '</span>' : '') +
     '</div>' +
   '</div>';
 }
 
+function startCountdown(elId, usedPct, resetTs) {
+  if (usedPct < 100 || !resetTs) return;
+  const el = document.getElementById(elId);
+  if (!el) return;
+  function tick() {
+    const diff = resetTs - Date.now() / 1000;
+    if (diff <= 0) { el.textContent = '0s'; return true; }
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = Math.floor(diff % 60);
+    if (h > 0) el.textContent = h + 'h ' + m + 'm ' + s + 's';
+    else if (m > 0) el.textContent = m + 'm ' + s + 's';
+    else el.textContent = s + 's';
+    return false;
+  }
+  tick();
+  var id = setInterval(function() { if (tick()) clearInterval(id); }, 1000);
+  __countdownTimers.push(id);
+}
+
+function renderUsageSummary() {
+  if (!__data) return '';
+  var rows = [
+    {label:'Claude Code', key:'claude_code'},
+    {label:'OpenCode',    key:'opencode'},
+    {label:'Codex',       key:'codex'},
+  ];
+  var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
+    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
+    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd&#39;hui</div>';
+  rows.forEach(function(r) {
+    var s = __data[r.key];
+    if (!s || !s.today_tok) return;
+    var cost = s.cost_today > 0 ? ' · $' + s.cost_today.toFixed(3) : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+      + 'margin-bottom:5px;font-size:11px">'
+      + '<span style="color:rgba(255,255,255,.45)">' + r.label + '</span>'
+      + '<span style="color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums">'
+      + fmt(s.today_tok) + ' tok' + cost + '</span></div>';
+  });
+  var all = __data.all;
+  if (all && all.today_tok) {
+    var totalCost = all.cost_today > 0 ? ' · $' + all.cost_today.toFixed(3) : '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+      + 'padding-top:6px;border-top:1px solid rgba(255,255,255,.06);font-size:12px;font-weight:600">'
+      + '<span style="color:rgba(255,255,255,.7)">Total</span>'
+      + '<span>' + fmt(all.today_tok) + ' tok' + totalCost + '</span></div>';
+  }
+  return html + '</div>';
+}
+
 function renderLimits() {
+  clearCountdowns();
   const lim = __limitsData;
   const el = document.getElementById('lim-body');
+
+  var heatmapHtml = '<div style="padding:14px 16px 6px">'
+    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
+    + 'color:rgba(255,255,255,.28);margin-bottom:8px">Contributions</div>'
+    + '<canvas id="contrib-canvas" style="display:block"></canvas>'
+    + '</div>';
+
   if (!lim) {
-    el.innerHTML = '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
-    return;
+    el.innerHTML = heatmapHtml + renderUsageSummary()
+      + '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
+    drawContribHeatmap(); return;
   }
   if (lim.error && lim.session_used == null && lim.week_used == null) {
-    el.innerHTML = '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
-    return;
+    el.innerHTML = heatmapHtml + renderUsageSummary()
+      + '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
+    drawContribHeatmap(); return;
   }
-  var html = '<div class="lim-body">';
+  var html = heatmapHtml + renderUsageSummary() + '<div class="lim-body">';
   if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
-  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset);
-  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset);
-  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset);
+  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
+  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
+  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
   html += '</div>';
   el.innerHTML = html;
+  drawContribHeatmap();
+  startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
+  startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
+  startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
 }
 
 """
@@ -1813,7 +2389,14 @@ class AppDelegate(NSObject):
         else:
             btn = self._item.button()
             self._pop.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, 1)
-            self.inject_data()
+            app_ref = self
+            def _check_and_inject(result, error):
+                if result:
+                    app_ref.inject_data()
+                else:
+                    app_ref.bootstrap_and_inject()
+            self._wv.evaluateJavaScript_completionHandler_(
+                "typeof injectData !== 'undefined'", _check_and_inject)
 
     def tick_(self, _):
         data = fetch()
@@ -1944,6 +2527,8 @@ class AppDelegate(NSObject):
         if data:
             self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
         def on_bootstrap(result, error):
+            if error:
+                print(f"[tokenbar] JS bootstrap error: {error}", flush=True)
             if not error and data:
                 self._inject_js(data)
         self._wv.evaluateJavaScript_completionHandler_(MAIN_JS + "\n'bootstrapped'", on_bootstrap)
@@ -1960,7 +2545,8 @@ class AppDelegate(NSObject):
     def _inject_js(self, data):
         if not data: return
         payload = dict(data, settings=_SETTINGS,
-                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES])
+                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES],
+                       git_heatmap=_git_heatmap())
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 

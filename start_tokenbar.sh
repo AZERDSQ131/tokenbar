@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Lance tokenbar.py en arrière-plan et loggue dans /tmp/tokenbar.log
+# Lance Tokenbar.app via LaunchServices (nécessaire sur macOS 26+)
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_FILE="/tmp/tokenbar.pid"
+APP="/Users/julesyzerd/Applications/Tokenbar.app"
 
-if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    echo "tokenbar tourne déjà (PID $(cat "$PID_FILE"))"
+if pgrep -f "tokenbar.py" > /dev/null 2>&1; then
+    echo "tokenbar tourne déjà"
     exit 0
 fi
 
-nohup python3 "$SCRIPT_DIR/tokenbar.py" > /tmp/tokenbar.log 2>&1 &
-echo $! > "$PID_FILE"
-echo "tokenbar démarré (PID $!)"
+open "$APP"
+echo "tokenbar démarré"
