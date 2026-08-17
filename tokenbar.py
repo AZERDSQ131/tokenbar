@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """OpenCode Token Bar — OpenCode + Claude Code."""
 
+import base64
 import json
 import os
 import sqlite3
@@ -32,6 +33,7 @@ OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
 CC_DIR      = Path.home() / ".claude/projects"
 CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
 OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
+CURSOR_DB   = Path.home() / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
 
 W, H   = 360, 320
 DEFAULT_REFRESH = 15.0
@@ -42,6 +44,8 @@ SETTINGS_FILE = Path.home() / ".tokenbar_settings.json"
 _SETTINGS = {}
 
 _cc_cache = {"ts": 0.0, "data": None}
+_cursor_cache = {"ts": 0.0, "data": None}
+_cursor_auth_cache = {"token": None, "sub": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
 _limits_cache = {"ts": 0.0, "data": None, "fetching": False}
 _git_cache = {"ts": 0.0, "heatmap": {}, "fetching": False}
@@ -763,6 +767,155 @@ def fetch_codex(day_ms, week_ms, month_ms, since_ms=None):
                 "breakdown_today": {}, "daily_breakdown": {}}
 
 
+# ── Cursor ───────────────────────────────────────────────────────────────────
+# Cursor n'expose pas d'API publique documentée : on réutilise le token de session
+# JWT que l'app desktop stocke localement (state.vscdb) pour interroger le même
+# endpoint interne que https://cursor.com/dashboard/spending (get-filtered-usage-events).
+
+def _cursor_auth():
+    global _cursor_auth_cache
+    if _cursor_auth_cache["token"]:
+        return _cursor_auth_cache["token"], _cursor_auth_cache["sub"]
+    if not CURSOR_DB.exists():
+        return None, None
+    try:
+        con = sqlite3.connect(f"file:{CURSOR_DB}?mode=ro", uri=True)
+        c = con.cursor()
+        c.execute("SELECT value FROM ItemTable WHERE key='cursorAuth/accessToken'")
+        row = c.fetchone()
+        con.close()
+        if not row:
+            return None, None
+        token = row[0]
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        sub = payload.get("sub")
+        if not sub:
+            return None, None
+        _cursor_auth_cache = {"token": token, "sub": sub}
+        return token, sub
+    except Exception:
+        return None, None
+
+
+def _fetch_cursor_events():
+    token, sub = _cursor_auth()
+    if not token or not sub:
+        return []
+    cookie = f"WorkosCursorSessionToken={sub}::{token}"
+    events = []
+    page = 1
+    while True:
+        body = json.dumps({"teamId": 0, "startDate": "0", "endDate": "9999999999999",
+                            "page": page, "pageSize": 200}).encode()
+        req = urllib.request.Request(
+            "https://cursor.com/api/dashboard/get-filtered-usage-events",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json", "Cookie": cookie,
+                     "Origin": "https://cursor.com", "Referer": "https://cursor.com/dashboard"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        batch = data.get("usageEventsDisplay", [])
+        events.extend(batch)
+        total = data.get("totalUsageEventsCount", len(events))
+        if len(events) >= total or not batch or page > 50:
+            break
+        page += 1
+    return events
+
+
+def fetch_cursor(day_ms, week_ms, month_ms, since_ms=None):
+    global _cursor_cache
+    if since_ms is None:
+        since_ms = month_ms
+    now = time.time()
+    empty = {"today": 0, "week": 0, "total": 0, "today_sess": 0, "all_sess": 0,
+              "daily": {}, "models": {}, "models_1d": {}, "models_7d": {}, "models_1m": {},
+              "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+              "cost_today": 0.0, "cost_all": 0.0, "cost_exact": True, "daily_cost": {},
+              "breakdown_today": {}, "daily_breakdown": {}}
+    if now - _cursor_cache["ts"] < 120 and _cursor_cache["data"] is not None:
+        return _cursor_cache["data"]
+    try:
+        events = _fetch_cursor_events()
+        if not events:
+            _cursor_cache = {"ts": now, "data": empty}
+            return empty
+
+        today = week = total = 0
+        today_sess, all_sess = set(), set()
+        daily, daily_cost, daily_bd = {}, {}, {}
+        models, models_1d, models_7d, models_1m = {}, {}, {}, {}
+        model_costs, model_costs_1d, model_costs_7d, model_costs_1m = {}, {}, {}, {}
+        bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+        for e in events:
+            ts_ms = int(e.get("timestamp") or 0)
+            if ts_ms <= 0:
+                continue
+            model = e.get("model") or "unknown"
+            if is_excluded(model):
+                continue
+            tu = e.get("tokenUsage") or {}
+            inp = tu.get("inputTokens", 0) or 0
+            out = tu.get("outputTokens", 0) or 0
+            cr  = tu.get("cacheReadTokens", 0) or 0
+            cw  = tu.get("cacheWriteTokens", 0) or 0
+            tok = inp + out + cr + cw
+            # chargedCents = coût réellement décompté du quota/forfait Cursor
+            # (identique à ce qu'affiche cursor.com/dashboard/spending)
+            cost = (e.get("chargedCents", 0) or 0) / 100.0
+            conv = e.get("conversationId")
+
+            total += tok
+            models[model] = models.get(model, 0) + tok
+            model_costs[model] = model_costs.get(model, 0.0) + cost
+            if conv:
+                all_sess.add(conv)
+
+            d = datetime.fromtimestamp(ts_ms / 1000.0).strftime("%Y-%m-%d")
+            daily[d] = daily.get(d, 0) + tok
+            daily_cost[d] = daily_cost.get(d, 0.0) + cost
+            bd = daily_bd.setdefault(d, {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0})
+            bd["i"] += inp; bd["o"] += out; bd["cr"] += cr; bd["cw"] += cw
+
+            if ts_ms >= month_ms:
+                models_1m[model] = models_1m.get(model, 0) + tok
+                model_costs_1m[model] = model_costs_1m.get(model, 0.0) + cost
+            if ts_ms >= week_ms:
+                week += tok
+                models_7d[model] = models_7d.get(model, 0) + tok
+                model_costs_7d[model] = model_costs_7d.get(model, 0.0) + cost
+            if ts_ms >= day_ms:
+                today += tok
+                if conv:
+                    today_sess.add(conv)
+                models_1d[model] = models_1d.get(model, 0) + tok
+                model_costs_1d[model] = model_costs_1d.get(model, 0.0) + cost
+                bd_today["input"] += inp; bd_today["output"] += out
+                bd_today["cache_read"] += cr; bd_today["cache_write"] += cw
+
+        result = {
+            "today": today, "week": week, "total": total,
+            "today_sess": len(today_sess), "all_sess": len(all_sess),
+            "daily": daily, "models": models,
+            "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
+            "model_costs": model_costs, "model_costs_1d": model_costs_1d,
+            "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
+            "cost_today": sum(model_costs_1d.values()), "cost_all": sum(model_costs.values()),
+            "cost_exact": True,
+            "daily_cost": daily_cost,
+            "breakdown_today": bd_today,
+            "daily_breakdown": daily_bd,
+        }
+        _cursor_cache = {"ts": now, "data": result}
+        return result
+    except Exception as e:
+        print(f"[tokenbar] cursor fetch error: {e}", flush=True)
+        return _cursor_cache["data"] if _cursor_cache["data"] is not None else empty
+
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 
 def fetch_claude_code(day_s, week_s, month_s, since_s=None):
@@ -885,6 +1038,7 @@ def fetch():
     oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
     cc = fetch_claude_code(day_s, week_s, month_s, since_s)
     cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
+    cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
 
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
@@ -904,10 +1058,10 @@ def fetch():
 
     all_models      = {}
     all_models_today = {}
-    for src in (oc["models"], cc["models"], cx["models"]):
+    for src in (oc["models"], cc["models"], cx["models"], cu["models"]):
         for k, v in src.items():
             all_models[k] = all_models.get(k, 0) + v
-    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {})):
+    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {}), cu.get("models_1d", {})):
         for k, v in src.items():
             all_models_today[k] = all_models_today.get(k, 0) + v
 
@@ -929,26 +1083,43 @@ def fetch():
     return {
         "limits": limits,
         "all": {
-            "today_tok":  oc["today"] + cc["today"] + cx["today"],
-            "week_tok":   oc["week"]  + cc["week"]  + cx["week"],
-            "all_tok":    oc["total"] + cc["total"] + cx["total"],
+            "today_tok":  oc["today"] + cc["today"] + cx["today"] + cu["today"],
+            "week_tok":   oc["week"]  + cc["week"]  + cx["week"]  + cu["week"],
+            "all_tok":    oc["total"] + cc["total"] + cx["total"] + cu["total"],
             "today_sess": None,
             "all_sess":   None,
             "top_model":  _top(all_models),
             "top_model_today": _top(all_models_today),
-            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"]),
-            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"]),
-            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"],
-            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"],
+            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"], cu["daily"]),
+            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"], cu["daily_cost"]),
+            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"] + cu["cost_today"],
+            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"]   + cu["cost_all"],
             "cost_exact": False,
             "breakdown_today": merge_bd_today(cc.get("breakdown_today", {}),
                                               oc.get("breakdown_today", {}),
-                                              cx.get("breakdown_today", {})),
+                                              cx.get("breakdown_today", {}),
+                                              cu.get("breakdown_today", {})),
             "daily_breakdown": merge_daily_bd(cc.get("daily_breakdown", {}),
                                               oc.get("daily_breakdown", {}),
-                                              cx.get("daily_breakdown", {})),
+                                              cx.get("daily_breakdown", {}),
+                                              cu.get("daily_breakdown", {})),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
+        },
+        "cursor": {
+            "today_tok":  cu["today"],
+            "week_tok":   cu["week"],
+            "all_tok":    cu["total"],
+            "today_sess": cu["today_sess"],
+            "all_sess":   cu["all_sess"],
+            "top_model":  _top(cu.get("models_1m") or cu["models"]),
+            "daily":      daily_list(cu["daily"]),
+            "daily_cost": daily_cost_list(cu["daily_cost"]),
+            "cost_today": cu["cost_today"],
+            "cost_all":   cu["cost_all"],
+            "cost_exact": cu.get("cost_exact", True),
+            "breakdown_today": cu.get("breakdown_today", {}),
+            "daily_breakdown": cu.get("daily_breakdown", {}),
         },
         "claude_code": {
             "today_tok":  cc["today"],
@@ -1013,8 +1184,9 @@ def fetch_all_models():
     oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
     cc = fetch_claude_code(day_s, week_s, month_s, since_s)
     cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
+    cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
 
-    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc):
+    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc, cu_m, cu_mc):
         rows = []
         for name, tok in oc_m.items():
             cost = oc_mc.get(name, estimate_cost(name, tok))
@@ -1025,13 +1197,16 @@ def fetch_all_models():
         for name, tok in cx_m.items():
             cost = cx_mc.get(name, estimate_cost(name, tok))
             rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Codex"})
+        for name, tok in cu_m.items():
+            cost = cu_mc.get(name, 0.0)
+            rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Cursor"})
         return sorted(rows, key=lambda x: -x["tokens"])
 
     return {
-        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"]),
-        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"]),
-        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"]),
-        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"]),
+        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"], cu["models_1d"], cu["model_costs_1d"]),
+        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"], cu["models_7d"], cu["model_costs_7d"]),
+        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"], cu["models_1m"], cu["model_costs_1m"]),
+        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"],    cu["models"],    cu["model_costs"]),
     }
 
 
@@ -1046,8 +1221,8 @@ html,body{width:360px;background:#1c1c1e;color:#fff;
   overflow:hidden;-webkit-font-smoothing:antialiased}
 
 /* tabs */
-.tabs{display:flex;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.08)}
-.tab{padding:10px 11px 9px;font-size:12px;font-weight:500;color:rgba(255,255,255,.38);
+.tabs{display:flex;padding:0 10px;border-bottom:1px solid rgba(255,255,255,.08)}
+.tab{padding:10px 7px 9px;font-size:12px;font-weight:500;color:rgba(255,255,255,.38);
   cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
   user-select:none;transition:color .15s}
 .tab:hover:not(.active){color:rgba(255,255,255,.6)}
@@ -1151,6 +1326,7 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
+  <div class="tab"        data-tab="cursor"       onclick="switchTab('cursor')">Cursor</div>
   <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
@@ -1248,6 +1424,7 @@ canvas{display:block;width:100%}
   <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
   <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
+  <div class="tab"  data-tab="cursor"       onclick="switchTab('cursor')">Cursor</div>
   <div class="tab active" data-tab="limits" onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
@@ -1855,6 +2032,7 @@ function renderUsageSummary() {
     {label:'Claude Code', key:'claude_code'},
     {label:'OpenCode',    key:'opencode'},
     {label:'Codex',       key:'codex'},
+    {label:'Cursor',      key:'cursor'},
   ];
   var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
     + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
@@ -2594,7 +2772,7 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = s.get("top_model_today") or ""
-        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code")) if data.get(key, {}).get("today_tok", 0) > 0]
+        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor")) if data.get(key, {}).get("today_tok", 0) > 0]
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
