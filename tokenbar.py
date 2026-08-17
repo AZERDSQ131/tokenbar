@@ -48,7 +48,6 @@ _cursor_cache = {"ts": 0.0, "data": None}
 _cursor_auth_cache = {"token": None, "sub": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
 _limits_cache = {"ts": 0.0, "data": None, "fetching": False}
-_git_cache = {"ts": 0.0, "heatmap": {}, "fetching": False}
 _start_file = Path.home() / ".tokenbar_start"
 if not _start_file.exists():
     _start_file.write_text(str(int(time.time())))
@@ -198,43 +197,6 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
         return dt.astimezone().strftime("%Y-%m-%d")
     except Exception:
         return datetime.fromtimestamp(fallback_ts).strftime("%Y-%m-%d")
-
-
-_GH_LOGIN = "AZERDSQ131"
-_GH_CLI   = "/opt/homebrew/bin/gh"
-
-def _fetch_git_heatmap_bg():
-    global _git_cache
-    _git_cache["fetching"] = True
-    try:
-        gql = ('{ user(login: "' + _GH_LOGIN + '") { contributionsCollection {'
-               ' contributionCalendar { weeks { contributionDays {'
-               ' date contributionCount } } } } } }')
-        r = subprocess.run(
-            [_GH_CLI, "api", "graphql", "-f", "query=" + gql],
-            capture_output=True, text=True, timeout=15,
-            stdin=subprocess.DEVNULL,
-        )
-        data = json.loads(r.stdout)
-        weeks = (data["data"]["user"]["contributionsCollection"]
-                 ["contributionCalendar"]["weeks"])
-        counts = {}
-        for w in weeks:
-            for day in w["contributionDays"]:
-                if day["contributionCount"]:
-                    counts[day["date"]] = day["contributionCount"]
-        _git_cache["heatmap"] = counts
-        _git_cache["ts"] = time.time()
-    except Exception as e:
-        print(f"[tokenbar] heatmap error: {e}", flush=True)
-    finally:
-        _git_cache["fetching"] = False
-
-
-def _git_heatmap():
-    if time.time() - _git_cache["ts"] > 300 and not _git_cache["fetching"]:
-        threading.Thread(target=_fetch_git_heatmap_bg, daemon=True).start()
-    return _git_cache["heatmap"]
 
 
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
@@ -1263,6 +1225,12 @@ def fetch():
                     for k in ("i", "o", "r", "cr", "cw")}
                 for d in dates}
 
+    def merge_daily_by_source(cc_d, oc_d, cx_d, cu_d):
+        dates = set().union(cc_d.keys(), oc_d.keys(), cx_d.keys(), cu_d.keys())
+        return {d: {"claude_code": cc_d.get(d, 0), "opencode": oc_d.get(d, 0),
+                    "codex": cx_d.get(d, 0), "cursor": cu_d.get(d, 0)}
+                for d in dates}
+
     limits = fetch_claude_limits_cached()
     codex_limits = fetch_codex_limits_cached()
     _raw_cursor_limits = fetch_cursor_limits_cached()
@@ -1298,6 +1266,7 @@ def fetch():
                                               oc.get("daily_breakdown", {}),
                                               cx.get("daily_breakdown", {}),
                                               cu.get("daily_breakdown", {})),
+            "daily_by_source": merge_daily_by_source(cc["daily"], oc["daily"], cx["daily"], cu["daily"]),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
@@ -1496,8 +1465,13 @@ canvas{display:block;width:100%}
 /* ── Limites page ── */
 #page-limits{display:none}
 .lim-body{padding:16px 20px 10px}
-.lim-plan{font-size:10px;letter-spacing:.05em;text-transform:uppercase;
-  color:rgba(255,255,255,.28);margin-bottom:16px}
+.lim-section{display:flex;align-items:center;gap:7px;margin:20px 0 10px;
+  padding-top:16px;border-top:1px solid rgba(255,255,255,.07)}
+.lim-section.first{margin-top:4px;padding-top:0;border-top:none}
+.lim-section-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.lim-section-name{font-size:11px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:rgba(255,255,255,.65)}
+.lim-section-plan{font-size:10px;color:rgba(255,255,255,.3)}
 .lim-bar{margin-bottom:20px}
 .lim-bar-top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px}
 .lim-bar-name{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
@@ -1539,6 +1513,7 @@ canvas{display:block;width:100%}
   <canvas id="cv"></canvas>
   <div id="tip"></div>
 </div>
+<div id="provider-legend" style="display:none;padding:4px 20px 0;gap:12px;flex-wrap:wrap"></div>
 <div class="chart-divider">estimated cost</div>
 <div class="chart-wrap">
   <canvas id="cv2"></canvas>
@@ -1650,6 +1625,7 @@ let __chartHits     = [];
 let __chartHits2    = [];
 let __settings      = {};
 let __dailyBreakdown = {};
+let __dailyBySource = {};
 const STYLES        = ['bars', 'line', 'area'];
 const BD_COLORS = {
   cr: {hex:'#fbbf24', rgba:'rgba(251,191,36,'},
@@ -1659,6 +1635,16 @@ const BD_COLORS = {
   o:  {hex:'#34d399', rgba:'rgba(52,211,153,'},
 };
 const BD_ORDER = ['cr','i','r','cw','o'];
+
+// Une couleur fixe par fournisseur, réutilisée partout (résumé, graphique "All", quotas)
+const PROVIDER_COLORS = {
+  claude_code: {hex:'#d97757', rgba:'rgba(217,119,87,'},
+  opencode:    {hex:'#8b5cf6', rgba:'rgba(139,92,246,'},
+  codex:       {hex:'#10a37f', rgba:'rgba(16,163,127,'},
+  cursor:      {hex:'#3b82f6', rgba:'rgba(59,130,246,'},
+};
+const PROVIDER_ORDER  = ['claude_code','opencode','codex','cursor'];
+const PROVIDER_LABELS = {claude_code:'Claude Code', opencode:'OpenCode', codex:'Codex', cursor:'Cursor'};
 
 function fmt(n){
   if(!n)return'0';
@@ -1715,6 +1701,18 @@ function renderTab(tab) {
   document.getElementById('s-model').textContent =
     s.top_model && s.top_model !== '—' ? 'Top model: ' + s.top_model : '';
   __dailyBreakdown = s.daily_breakdown || {};
+  __dailyBySource = (tab === 'all' && s.daily_by_source) ? s.daily_by_source : {};
+  const legendEl = document.getElementById('provider-legend');
+  if (tab === 'all' && Object.keys(__dailyBySource).length) {
+    legendEl.style.display = 'flex';
+    legendEl.innerHTML = PROVIDER_ORDER.map(function(k){
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:rgba(255,255,255,.4)">'
+        + '<span style="width:6px;height:6px;border-radius:50%;background:' + PROVIDER_COLORS[k].hex + '"></span>'
+        + PROVIDER_LABELS[k] + '</span>';
+    }).join('');
+  } else {
+    legendEl.style.display = 'none';
+  }
   drawChart(s.daily || []);
   drawCostChart(s.daily_cost || []);
 
@@ -1879,17 +1877,21 @@ function drawStackedBars(daily) {
   ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.setLineDash([2,5]); ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(leftPad,bl+2); ctx.lineTo(cw,bl+2); ctx.stroke();
   ctx.setLineDash([]);
+  const bySource = __tab === 'all' && Object.keys(__dailyBySource).length > 0;
+  const ORDER  = bySource ? PROVIDER_ORDER  : BD_ORDER;
+  const COLORS = bySource ? PROVIDER_COLORS : BD_COLORS;
+  const SRC    = bySource ? __dailyBySource : __dailyBreakdown;
   daily.forEach(function(d,i){
     const total = d.tokens||1;
     const bh = Math.max(2, total/max*bMaxH);
     const x = i*(bw+gap)+gap+leftPad;
-    const bd = __dailyBreakdown[d.date];
-    if (bd && (bd.cr||bd.i||bd.cw||bd.o)) {
+    const bd = SRC[d.date];
+    if (bd && ORDER.some(function(k){return bd[k];})) {
       let yOff = 0;
-      BD_ORDER.forEach(function(key){
+      ORDER.forEach(function(key){
         const v = bd[key]||0; if (!v) return;
         const segH = Math.max(0, (v/total)*bh);
-        const col = BD_COLORS[key];
+        const col = COLORS[key];
         ctx.fillStyle = col.rgba + '0.82)';
         ctx.fillRect(x, bl-bh+yOff, bw, segH);
         yOff += segH;
@@ -1904,15 +1906,17 @@ function drawStackedBars(daily) {
 }
 
 function buildTipHtml(hit) {
-  const bd = __dailyBreakdown[hit.date];
+  const bySource = __tab === 'all' && Object.keys(__dailyBySource).length > 0;
+  const bd = bySource ? __dailyBySource[hit.date] : __dailyBreakdown[hit.date];
   const header = '<div style="font-weight:600;margin-bottom:5px;font-size:12px">'+fmtDate(hit.date)+'&nbsp;&nbsp;'+fmt(hit.val)+'</div>';
   if (!bd) return header;
   const total = hit.val||1;
-  const rows = BD_ORDER.map(function(key){
+  const ORDER = bySource ? PROVIDER_ORDER : BD_ORDER;
+  const rows = ORDER.map(function(key){
     const v = bd[key]||0; if (!v) return '';
     const pct = Math.round(v/total*100);
-    const col = BD_COLORS[key].hex;
-    const label = {cr:'Cache R',i:'Input',r:'Reasoning',cw:'Cache W',o:'Output'}[key];
+    const col = bySource ? PROVIDER_COLORS[key].hex : BD_COLORS[key].hex;
+    const label = bySource ? PROVIDER_LABELS[key] : {cr:'Cache R',i:'Input',r:'Reasoning',cw:'Cache W',o:'Output'}[key];
     return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px">'
       +'<span><span style="color:'+col+'">●</span>&nbsp;'+label+'</span>'
       +'<span style="color:rgba(255,255,255,.7)">'+fmt(v)+'&nbsp;<span style="opacity:.45">'+pct+'%</span></span>'
@@ -1921,10 +1925,15 @@ function buildTipHtml(hit) {
   return header+rows;
 }
 
+function hasChartBreakdown() {
+  return (__tab === 'all' && Object.keys(__dailyBySource).length > 0)
+    || Object.keys(__dailyBreakdown).length > 0;
+}
+
 function drawChart(daily) {
   __lastDaily = daily || [];
   const filtered = filterByPeriod(__lastDaily);
-  if (__chartStyle==='bars' && Object.keys(__dailyBreakdown).length>0) {
+  if (__chartStyle==='bars' && hasChartBreakdown()) {
     drawStackedBars(filtered);
   } else {
     drawChartWith('cv', filtered, d=>d.tokens, __chartHits, true);
@@ -1945,7 +1954,7 @@ function drawCostChart(daily) {
       for(const h of hitsRef){if(mx>=h.x0&&mx<=h.x1){hit=h;break;}}
       const tip=document.getElementById(tipId);
       if(hit){
-        if(isMain && Object.keys(__dailyBreakdown).length>0){
+        if(isMain && hasChartBreakdown()){
           tip.innerHTML=buildTipHtml(hit);
         }else{
           tip.textContent=fmtDate(hit.date)+'  '+fmtFn(hit.val);
@@ -1996,7 +2005,6 @@ function injectData(d) {
   if(d.limits != null){__limitsData = d.limits;}
   if(d.codex_limits != null){__codexLimitsData = d.codex_limits;}
   if(d.cursor_limits != null){__cursorLimitsData = d.cursor_limits;}
-  if(d.git_heatmap != null){__gitHeatmap = d.git_heatmap;}
   if(__onLimitsPage){
     renderLimits();
   } else {
@@ -2029,138 +2037,10 @@ function setColor(hex){
   act('saveSettings',JSON.stringify(__settings));
 }
 
-// ── Heatmap GitHub ───────────────────────────────────────────────────────────
-
 let __limitsData = null;
 let __codexLimitsData = null;
 let __cursorLimitsData = null;
 let __onLimitsPage = false;
-let __gitHeatmap = {};
-
-function drawContribHeatmap() {
-  var canvas = document.getElementById('contrib-canvas');
-  if (!canvas) return;
-  var heatmap = __gitHeatmap || {};
-  var dpr = window.devicePixelRatio || 1;
-
-  // Disposition : 7 colonnes (Lun→Dim) × N lignes (semaines du mois)
-  // → remplit la largeur et forme approximativement un carré
-  var totalW = 312;
-  var step   = Math.floor(totalW / 7);   // 44px
-  var cell   = step - 4;                 // 40px
-  var topPad = 26;  // labels jours
-  var legH   = 24;
-
-  var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
-              'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
-  var joursNom = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
-
-  // Bornes du mois courant, alignées sur la semaine (lundi=premier jour)
-  var today = new Date(); today.setHours(0,0,0,0);
-  var firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  var lastOfMonth  = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-  var startDow = (firstOfMonth.getDay() + 6) % 7; // 0=lun
-  var endDow   = (lastOfMonth.getDay()  + 6) % 7;
-  var start = new Date(firstOfMonth); start.setDate(start.getDate() - startDow);
-  var end   = new Date(lastOfMonth);  if (endDow < 6) end.setDate(end.getDate() + (6 - endDow));
-  var numWeeks = Math.round((end - start) / 604800000) + 1;
-
-  var H = topPad + numWeeks * step + legH;
-  canvas.width  = totalW * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width  = totalW + 'px';
-  canvas.style.height = H + 'px';
-  var ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
-  function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
-
-  // Mois/année : injecté dans le header HTML (aligné avec "Contributions")
-  var monthLbl = document.getElementById('contrib-month');
-  if (monthLbl) monthLbl.textContent = mois[today.getMonth()] + ' ' + today.getFullYear();
-
-  // Labels jours (Lu Ma Me Je Ve Sa Di) centrés sur chaque colonne
-  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,255,255,.4)';
-  ['Lu','Ma','Me','Je','Ve','Sa','Di'].forEach(function(lbl, i) {
-    ctx.fillText(lbl, i * step + step / 2, 15);
-  });
-
-  // Grille : row = semaine, col = jour de semaine (0=lun, 6=dim)
-  var d = new Date(start);
-  for (var row = 0; row < numWeeks; row++) {
-    for (var col = 0; col < 7; col++) {
-      var inMonth = d.getMonth() === today.getMonth();
-      var isFuture = d > today;
-      var ds = d.getFullYear() + '-'
-        + String(d.getMonth()+1).padStart(2,'0') + '-'
-        + String(d.getDate()).padStart(2,'0');
-      var c = heatmap[ds] || 0;
-      ctx.fillStyle = (!inMonth || isFuture) ? 'rgba(33,38,45,0.35)' : colors[lvl(c)];
-      var x = col * step;
-      var y = topPad + row * step;
-      ctx.beginPath();
-      if (ctx.roundRect) { ctx.roundRect(x, y, cell, cell, 4); }
-      else { ctx.rect(x, y, cell, cell); }
-      ctx.fill();
-      d.setDate(d.getDate() + 1);
-    }
-  }
-
-  // Légende Less / More
-  var legY = topPad + numWeeks * step + 16;
-  var legX = totalW - 5 * 16;
-  ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,.32)';
-  ctx.fillText('Less', legX - 4, legY);
-  colors.forEach(function(col, i) {
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    if (ctx.roundRect) { ctx.roundRect(legX + i*16, legY - 11, 12, 12, 2); }
-    else { ctx.rect(legX + i*16, legY - 11, 12, 12); }
-    ctx.fill();
-  });
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,.32)';
-  ctx.fillText('More', legX + 5*16 + 2, legY);
-
-  // Tooltip
-  var tip = document.getElementById('contrib-tip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'contrib-tip';
-    tip.style.cssText = 'position:fixed;display:none;background:#1c2128;'
-      + 'border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:6px 10px;'
-      + 'font-size:11px;color:rgba(255,255,255,.85);pointer-events:none;z-index:999;'
-      + 'white-space:nowrap;line-height:1.5;box-shadow:0 4px 12px rgba(0,0,0,.5)';
-    document.body.appendChild(tip);
-  }
-
-  canvas.onmousemove = function(e) {
-    var rect = canvas.getBoundingClientRect();
-    var mx = e.clientX - rect.left;
-    var my = e.clientY - rect.top;
-    var col = Math.floor(mx / step);
-    var row = Math.floor((my - topPad) / step);
-    if (col < 0 || col >= 7 || row < 0 || row >= numWeeks) { tip.style.display='none'; return; }
-    if (mx < col*step || mx > col*step+cell || my < topPad+row*step || my > topPad+row*step+cell) { tip.style.display='none'; return; }
-    var dd = new Date(start); dd.setDate(dd.getDate() + row*7 + col);
-    if (dd > today || dd.getMonth() !== today.getMonth()) { tip.style.display='none'; return; }
-    var ds = dd.getFullYear() + '-' + String(dd.getMonth()+1).padStart(2,'0') + '-' + String(dd.getDate()).padStart(2,'0');
-    var cnt = heatmap[ds] || 0;
-    var label = cnt === 0 ? 'Aucune contribution' : cnt === 1 ? '1 contribution' : cnt + ' contributions';
-    var dateStr = joursNom[dd.getDay()] + ' ' + dd.getDate() + ' ' + mois[dd.getMonth()];
-    tip.innerHTML = '<strong>' + label + '</strong><br><span style="opacity:.55">' + dateStr + '</span>';
-    var tx = e.clientX + 10, ty = e.clientY - 40;
-    if (tx + 160 > window.innerWidth) tx = e.clientX - 170;
-    if (ty < 0) ty = e.clientY + 14;
-    tip.style.left = tx + 'px'; tip.style.top = ty + 'px'; tip.style.display = 'block';
-  };
-  canvas.onmouseleave = function() { tip.style.display = 'none'; };
-}
 
 function switchToLimits() {
   __onLimitsPage = true;
@@ -2248,7 +2128,10 @@ function renderUsageSummary() {
     var cost = s.cost_today > 0 ? ' · $' + s.cost_today.toFixed(3) : '';
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
       + 'margin-bottom:5px;font-size:11px">'
-      + '<span style="color:rgba(255,255,255,.45)">' + r.label + '</span>'
+      + '<span style="color:rgba(255,255,255,.45)">'
+      + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;'
+      + 'background:' + PROVIDER_COLORS[r.key].hex + ';margin-right:6px"></span>'
+      + r.label + '</span>'
       + '<span style="color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums">'
       + fmt(s.today_tok) + ' tok' + cost + '</span></div>';
   });
@@ -2263,39 +2146,39 @@ function renderUsageSummary() {
   return html + '</div>';
 }
 
+function sectionHeader(providerKey, name, plan, first) {
+  return '<div class="lim-section' + (first ? ' first' : '') + '">'
+    + '<span class="lim-section-dot" style="background:' + PROVIDER_COLORS[providerKey].hex + '"></span>'
+    + '<span class="lim-section-name">' + name + '</span>'
+    + (plan ? '<span class="lim-section-plan">&middot; ' + plan + '</span>' : '')
+    + '</div>';
+}
+
 function renderLimits() {
   clearCountdowns();
   const lim = __limitsData;
   const el = document.getElementById('lim-body');
 
-  var heatmapHtml = '<div style="padding:14px 16px 6px">'
-    + '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">'
-    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:rgba(255,255,255,.28)">Contributions</div>'
-    + '<div id="contrib-month" style="font-size:11px;color:rgba(255,255,255,.5)"></div>'
-    + '</div>'
-    + '<canvas id="contrib-canvas" style="display:block"></canvas>'
-    + '</div>';
-
   if (!lim) {
-    el.innerHTML = heatmapHtml + renderUsageSummary()
+    el.innerHTML = renderUsageSummary()
       + '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
-    drawContribHeatmap(); return;
+    return;
   }
+
+  var html = renderUsageSummary() + '<div class="lim-body">';
+
+  html += sectionHeader('claude_code', 'Claude Code', lim.plan, true);
   if (lim.error && lim.session_used == null && lim.week_used == null) {
-    el.innerHTML = heatmapHtml + renderUsageSummary()
-      + '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
-    drawContribHeatmap(); return;
+    html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
+  } else {
+    if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
+    if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
+    if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
   }
-  var html = heatmapHtml + renderUsageSummary() + '<div class="lim-body">';
-  if (lim.plan) html += '<div class="lim-plan">' + lim.plan + '</div>';
-  if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
-  if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
-  if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
 
   var cx = __codexLimitsData;
   if (cx) {
-    html += '<div class="lim-plan" style="margin-top:18px">Codex' + (cx.plan ? ' &middot; ' + cx.plan : '') + '</div>';
+    html += sectionHeader('codex', 'Codex', cx.plan, false);
     if (cx.error && cx.session_used == null && cx.week_used == null) {
       html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cx.error + '</div>';
     } else {
@@ -2306,31 +2189,32 @@ function renderLimits() {
 
   var cur = __cursorLimitsData;
   if (cur) {
-    html += '<div class="lim-plan" style="margin-top:18px">Cursor' + (cur.plan ? ' &middot; ' + cur.plan : '') + '</div>';
+    html += sectionHeader('cursor', 'Cursor', cur.plan, false);
     if (cur.error && cur.period_spent == null) {
       html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cur.error + '</div>';
-    } else if (cur.has_hard_limit && cur.hard_limit) {
-      var curPct = Math.min(100, Math.round((cur.period_spent || 0) / cur.hard_limit * 100));
+    } else {
+      var hasCap = cur.has_hard_limit && cur.hard_limit;
+      var curPct, curSub;
+      if (hasCap) {
+        curPct = Math.min(100, Math.round((cur.period_spent || 0) / cur.hard_limit * 100));
+        curSub = '$' + (cur.period_spent||0).toFixed(2) + ' / $' + cur.hard_limit.toFixed(0);
+      } else {
+        var now = new Date();
+        var dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+        curPct = Math.round(now.getDate()/dim*100);
+        curSub = '$' + (cur.period_spent||0).toFixed(2) + ' d&#233;pens&#233;s &middot; jour ' + now.getDate() + '/' + dim;
+      }
       var curColor = barColor(curPct);
       html += '<div class="lim-bar"><div class="lim-bar-top">'
-        + '<span class="lim-bar-name">Cursor p&#233;riode</span>'
+        + '<span class="lim-bar-name">Mois</span>'
         + '<span class="lim-bar-num" style="color:' + curColor + '">' + curPct + '%</span></div>'
         + '<div class="lim-track"><div class="lim-fill" style="width:' + curPct + '%;background:' + curColor + '"></div></div>'
-        + '<div class="lim-bar-sub"><span>$' + (cur.period_spent||0).toFixed(2) + ' / $' + cur.hard_limit.toFixed(0) + '</span></div>'
-        + '</div>';
-    } else {
-      var periodEnd = cur.period_end_ts
-        ? ' &middot; jusqu&#39;au ' + new Date(cur.period_end_ts * 1000).toLocaleDateString('fr-FR', {day:'numeric', month:'short'})
-        : '';
-      html += '<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:16px">'
-        + (cur.period_spent != null ? '$' + cur.period_spent.toFixed(2) + ' utilis&#233;s ce mois' : 'Pas de limite de d&#233;pense configur&#233;e')
-        + periodEnd + '</div>';
+        + '<div class="lim-bar-sub"><span>' + curSub + '</span></div></div>';
     }
   }
 
   html += '</div>';
   el.innerHTML = html;
-  drawContribHeatmap();
   startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
   startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
   startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
@@ -2984,8 +2868,7 @@ class AppDelegate(NSObject):
     def _inject_js(self, data):
         if not data: return
         payload = dict(data, settings=_SETTINGS,
-                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES],
-                       git_heatmap=_git_heatmap())
+                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES])
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
