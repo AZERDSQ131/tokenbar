@@ -200,32 +200,60 @@ def _local_day_key(ts_iso: str, fallback_ts: float) -> str:
 
 
 # (input $/M, output $/M, cache_write_5m $/M, cache_read $/M)
+# Sources: platform.claude.com/docs/en/about-claude/pricing (vérifié 2026-08-18)
 CLAUDE_PRICING = [
+    ("opus-5",    5.00, 25.00, 6.25, 0.50),
     ("opus-4",    5.00, 25.00, 6.25, 0.50),
+    ("sonnet-5",  2.00, 10.00, 2.50, 0.20),
     ("sonnet-4",  3.00, 15.00, 3.75, 0.30),
     ("haiku-4",   1.00,  5.00, 1.25, 0.10),
-    ("opus",     15.00, 75.00, 18.75, 1.50),
-    ("sonnet",    3.00, 15.00, 3.75, 0.30),
+    ("opus",      5.00, 25.00, 6.25, 0.50),
+    ("sonnet",    2.00, 10.00, 2.50, 0.20),
     ("haiku",     0.25,  1.25, 0.30, 0.03),
 ]
 
-BLENDED_RATES = [  # $/M blended (70% input + 30% output) pour modèles non-Claude
-    ("gpt-5.4-mini",       1.9),   # $0.75 in + $4.50 out
-    ("gpt-5.5",           12.5),   # $5.00 in + $30.00 out
-    ("gpt-5.4",            7.5),   # $3.00 in + $18.00 out
-    ("gpt-5.3-codex",      3.0),   # codex family
-    ("gpt-5.2-codex",      3.0),
-    ("gpt-5.1-codex",      3.0),
-    ("gpt-5.3",            7.5),
-    ("gpt-5.2",            7.5),
-    ("gpt-5.1",            7.5),
+# $/M blended (70% input + 30% output), tarifs API officiels vérifiés le 2026-08-18
+BLENDED_RATES = [
+    # -- gratuit : OpenRouter free tier / OpenCode Zen free / local Ollama --
+    ("big-pickle",             0.0),   # OpenCode Zen, gratuit (période de feedback)
+    ("qwen3-next-80b-a3b",     0.0),   # OpenRouter, variante instruct gratuite
+    ("nemotron-3-super-120b",  0.18),  # OpenRouter payant: $0.085 in / $0.40 out
+    ("sakana",                 0.0),
+    ("vibethinker",            0.0),   # modèle local (Ollama)
+    ("qwen3:4b",               0.0),   # modèle local (Ollama)
+    ("phi3",                   0.0),   # modèle local (Ollama)
+    ("nemotron-nano",          0.0),   # modèle local (Ollama)
+    ("owl-alpha",              0.0),   # OpenRouter, gratuit au 2026-08
+
+    # -- OpenAI (developers.openai.com/api/docs/pricing) --
+    ("gpt-5.6-luna",       0.5),    # $0.20 in / $1.20 out
+    ("gpt-5.6-terra",      5.0),    # $2.00 in / $12.00 out
+    ("gpt-5.6-sol",       12.5),    # $5.00 in / $30.00 out
+    ("gpt-5.5",           12.5),    # $5.00 in / $30.00 out
+    ("gpt-5.4-mini",     1.875),    # $0.75 in / $4.50 out
+    ("gpt-5.4",           6.25),    # $2.50 in / $15.00 out
+    ("gpt-5.3-codex",    5.425),    # $1.75 in / $14.00 out
+    ("gpt-5.2-codex",    5.425),    # $1.75 in / $14.00 out
+    ("gpt-5.1-codex-max", 3.875),   # $1.25 in / $10.00 out
+    ("gpt-5.1-codex-mini",0.775),   # $0.25 in / $2.00 out
+    ("codex-auto-review", 5.425),   # revue auto Codex CLI, tarif codex par défaut
+    ("gpt-5.2",           5.425),   # $1.75 in / $14.00 out
+    ("gpt-5.1",           3.875),   # $1.25 in / $10.00 out
     ("o4-mini",            2.0),
     ("o4",                12.0),
     ("o3",                20.0),
     ("gpt-4o-mini",        0.3),
     ("gpt-4o",             5.0),
-    ("deepseek-v4-flash",  0.18),  # $0.14 in + $0.28 out
-    ("mimo",               0.18),  # $0.14 in + $0.28 out (Xiaomi API)
+
+    # -- autres fournisseurs --
+    ("deepseek-v4-flash",  0.35),   # DeepSeek API, hors-pic: $0.22 in / $0.66 out
+    ("deepseek-v4-pro",    1.06),   # OpenRouter (release 0813): $0.66 in / $1.98 out
+    ("z-ai/glm-5.2",        2.3),   # Z.ai officiel: $1.40 in / $4.40 out
+    ("glm-5.2",              2.3),
+    ("kimi-k2.6",         1.865),   # Moonshot officiel: $0.95 in / $4.00 out
+    ("mistral-medium-3.5",  3.3),   # Mistral officiel: $1.50 in / $7.50 out
+    ("minimax-m3",          0.57),  # officiel: $0.30 in / $1.20 out
+    ("mimo",               0.18),   # $0.14 in + $0.28 out (Xiaomi API, non-free)
 ]
 
 def claude_cost(model: str, inp: int, out: int,
@@ -234,6 +262,9 @@ def claude_cost(model: str, inp: int, out: int,
     for key, ri, ro, rw, rr in CLAUDE_PRICING:
         if key in m:
             return (inp * ri + out * ro + cache_write * rw + cache_read * rr) / 1_000_000
+    # variantes gratuites (OpenRouter ":free" / "-free", OpenCode Zen free tier)
+    if "free" in m:
+        return 0.0
     total = inp + out + cache_write + cache_read
     rates = dict(BLENDED_RATES)
     rates.update(_SETTINGS.get("custom_rates", {}))
