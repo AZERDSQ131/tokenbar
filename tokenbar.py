@@ -18,7 +18,7 @@ from pathlib import Path
 import objc
 from AppKit import (
     NSApp, NSApplication, NSApplicationActivationPolicyAccessory,
-    NSObject, NSPopover, NSPopoverBehaviorTransient,
+    NSObject, NSPopover, NSPopoverBehaviorTransient, NSScreen,
     NSStatusBar, NSVariableStatusItemLength, NSViewController,
     NSView, NSMakeRect, NSSize, NSAppearance, NSVisualEffectView, NSColor,
     NSWindow, NSBackingStoreBuffered,
@@ -1413,7 +1413,9 @@ MAIN_HTML = """\
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:360px;background:#1c1c1e;color:#fff;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
-  overflow:hidden;-webkit-font-smoothing:antialiased}
+  overflow-x:hidden;overflow-y:auto;-webkit-font-smoothing:antialiased}
+html::-webkit-scrollbar{width:4px}
+html::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
 
 /* tabs */
 .tabs{display:flex;padding:0 10px;border-bottom:1px solid rgba(255,255,255,.08)}
@@ -2945,6 +2947,14 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def resize_popover(self, h):
+        max_h = 700
+        try:
+            screen = NSScreen.mainScreen()
+            if screen:
+                max_h = int(screen.visibleFrame().size.height - 60)
+        except Exception:
+            pass
+        h = max(H, min(int(h), max_h))
         self._pop.setContentSize_(NSSize(W, h))
         self._wv.setFrame_(NSMakeRect(0, 0, W, h))
 
