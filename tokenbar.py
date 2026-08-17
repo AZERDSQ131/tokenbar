@@ -471,6 +471,191 @@ def fetch_claude_limits_cached():
     return _limits_cache["data"]
 
 
+def _fmt_reset_fr(ts):
+    if not ts:
+        return None
+    diff = ts - time.time()
+    if diff <= 0:
+        return "bientôt"
+    days = int(diff // 86400)
+    if days > 0:
+        hours = int((diff % 86400) // 3600)
+        return f"dans {days}j" + (f" {hours}h" if hours else "")
+    hours = int(diff // 3600)
+    if hours > 0:
+        minutes = int((diff % 3600) // 60)
+        return f"dans {hours}h" + (f" {minutes}m" if minutes else "")
+    minutes = max(1, int(diff // 60))
+    return f"dans {minutes}m"
+
+
+# ── Codex — quotas (limites hebdo/5h du plan ChatGPT) ───────────────────────────
+# Codex CLI n'a pas de commande "usage" : les quotas (rate_limits) sont
+# republies periodiquement par le backend dans les fichiers de session
+# (~/.codex/sessions/**/*.jsonl, evenement token_count). On relit les fichiers
+# les plus recents et on garde le dernier snapshot rencontre.
+
+CODEX_SESSIONS_DIR = Path.home() / ".codex/sessions"
+_codex_limits_cache = {"ts": 0.0, "data": None, "fetching": False}
+
+
+def _fetch_codex_limits_impl():
+    if not CODEX_SESSIONS_DIR.exists():
+        return {"error": "Dossier de sessions Codex introuvable."}
+    try:
+        files = sorted(CODEX_SESSIONS_DIR.glob("**/*.jsonl"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)[:8]
+        best_ts, best_rl = None, None
+        for f in files:
+            try:
+                with open(f, "r", errors="ignore") as fh:
+                    for line in fh:
+                        if '"rate_limits"' not in line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+                        rl = (obj.get("payload") or {}).get("rate_limits")
+                        if not rl:
+                            continue
+                        ts = obj.get("timestamp") or ""
+                        if best_ts is None or ts > best_ts:
+                            best_ts, best_rl = ts, rl
+            except Exception:
+                continue
+        if not best_rl:
+            return {"error": "Aucune donnée de quota Codex trouvée."}
+
+        def window_label(minutes):
+            if not minutes:
+                return "Fenêtre"
+            if minutes <= 360:
+                return f"Session ({round(minutes/60)}h)"
+            days = round(minutes / 1440)
+            if days <= 1:
+                return "Session (24h)"
+            if 6 <= days <= 8:
+                return "Semaine"
+            if 28 <= days <= 31:
+                return "Mois"
+            return f"Fenêtre ({days}j)"
+
+        result = {"plan": (best_rl.get("plan_type") or "").upper() or None}
+        primary = best_rl.get("primary")
+        if primary and primary.get("used_percent") is not None:
+            result["week_used"] = round(primary["used_percent"])
+            result["week_label"] = "Codex — " + window_label(primary.get("window_minutes"))
+            resets_at = primary.get("resets_at")
+            result["week_reset_ts"] = resets_at
+            result["week_reset"] = _fmt_reset_fr(resets_at)
+        secondary = best_rl.get("secondary")
+        if secondary and secondary.get("used_percent") is not None:
+            result["session_used"] = round(secondary["used_percent"])
+            result["session_label"] = "Codex — " + window_label(secondary.get("window_minutes"))
+            resets_at = secondary.get("resets_at")
+            result["session_reset_ts"] = resets_at
+            result["session_reset"] = _fmt_reset_fr(resets_at)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _refresh_codex_limits_bg():
+    if _codex_limits_cache["fetching"]:
+        return
+    _codex_limits_cache["fetching"] = True
+    try:
+        data = _fetch_codex_limits_impl()
+        _codex_limits_cache["ts"] = time.time()
+        _codex_limits_cache["data"] = data
+    finally:
+        _codex_limits_cache["fetching"] = False
+
+
+def fetch_codex_limits_cached():
+    now = time.time()
+    if now - _codex_limits_cache["ts"] > 300:
+        threading.Thread(target=_refresh_codex_limits_bg, daemon=True).start()
+    return _codex_limits_cache["data"]
+
+
+# ── Cursor — quotas (periode de facturation + limite de depense) ───────────────
+
+_cursor_limits_cache = {"ts": 0.0, "data": None, "fetching": False}
+
+
+def _cursor_post(path, token, sub, body=None):
+    cookie = f"WorkosCursorSessionToken={sub}::{token}"
+    req = urllib.request.Request(
+        f"https://cursor.com/api/dashboard/{path}",
+        data=json.dumps(body or {}).encode(), method="POST",
+        headers={"Content-Type": "application/json", "Cookie": cookie,
+                 "Origin": "https://cursor.com", "Referer": "https://cursor.com/dashboard"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())
+
+
+def _fetch_cursor_limits_impl():
+    token, sub = _cursor_auth()
+    if not token or not sub:
+        return {"error": "Cursor non connecté (aucun token local trouvé)."}
+
+    result = {}
+    try:
+        preq = urllib.request.Request("https://api2.cursor.sh/auth/full_stripe_profile",
+                                       headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(preq, timeout=10) as r:
+            profile = json.loads(r.read())
+        plan = profile.get("individualMembershipType") or profile.get("membershipType")
+        result["plan"] = plan.upper() if plan else None
+    except Exception:
+        pass
+
+    try:
+        hl = _cursor_post("get-hard-limit", token, sub)
+        result["has_hard_limit"] = not hl.get("noUsageBasedAllowed", True)
+        if hl.get("hardLimit") is not None:
+            result["hard_limit"] = hl["hardLimit"]
+    except Exception:
+        pass
+
+    _MIN_SANE_TS = 1577836800.0  # 2020-01-01, filtre les dates sentinelles (ex: epoch 1900)
+    try:
+        inv = _cursor_post("get-monthly-invoice", token, sub)
+        p_start = inv.get("periodStartMs")
+        p_end   = inv.get("periodEndMs")
+        if p_start and int(p_start) / 1000.0 >= _MIN_SANE_TS:
+            result["period_start_ts"] = int(p_start) / 1000.0
+        if p_end and int(p_end) / 1000.0 >= _MIN_SANE_TS:
+            result["period_end_ts"] = int(p_end) / 1000.0
+    except Exception:
+        pass
+
+    if "error" not in result and not result:
+        return {"error": "Aucune donnée de quota Cursor trouvée."}
+    return result
+
+
+def _refresh_cursor_limits_bg():
+    if _cursor_limits_cache["fetching"]:
+        return
+    _cursor_limits_cache["fetching"] = True
+    try:
+        data = _fetch_cursor_limits_impl()
+        _cursor_limits_cache["ts"] = time.time()
+        _cursor_limits_cache["data"] = data
+    finally:
+        _cursor_limits_cache["fetching"] = False
+
+
+def fetch_cursor_limits_cached():
+    now = time.time()
+    if now - _cursor_limits_cache["ts"] > 300:
+        threading.Thread(target=_refresh_cursor_limits_bg, daemon=True).start()
+    return _cursor_limits_cache["data"]
+
+
 # ── OpenCode ──────────────────────────────────────────────────────────────────
 
 def fetch_opencode_workflow_tokens():
@@ -1079,9 +1264,19 @@ def fetch():
                 for d in dates}
 
     limits = fetch_claude_limits_cached()
+    codex_limits = fetch_codex_limits_cached()
+    _raw_cursor_limits = fetch_cursor_limits_cached()
+    cursor_limits = dict(_raw_cursor_limits) if _raw_cursor_limits else _raw_cursor_limits
+    if cursor_limits and "error" not in cursor_limits:
+        p_start = cursor_limits.get("period_start_ts")
+        spent = sum(c for d, c in cu["daily_cost"].items()
+                    if not p_start or datetime.strptime(d, "%Y-%m-%d").timestamp() >= p_start)
+        cursor_limits["period_spent"] = round(spent, 2)
 
     return {
         "limits": limits,
+        "codex_limits": codex_limits,
+        "cursor_limits": cursor_limits,
         "all": {
             "today_tok":  oc["today"] + cc["today"] + cx["today"] + cu["today"],
             "week_tok":   oc["week"]  + cc["week"]  + cx["week"]  + cu["week"],
@@ -1797,6 +1992,8 @@ function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
   if(d.limits != null){__limitsData = d.limits;}
+  if(d.codex_limits != null){__codexLimitsData = d.codex_limits;}
+  if(d.cursor_limits != null){__cursorLimitsData = d.cursor_limits;}
   if(d.git_heatmap != null){__gitHeatmap = d.git_heatmap;}
   if(__onLimitsPage){
     renderLimits();
@@ -1833,6 +2030,8 @@ function setColor(hex){
 // ── Heatmap GitHub ───────────────────────────────────────────────────────────
 
 let __limitsData = null;
+let __codexLimitsData = null;
+let __cursorLimitsData = null;
 let __onLimitsPage = false;
 let __gitHeatmap = {};
 
@@ -1986,11 +2185,15 @@ function clearCountdowns() {
   __countdownTimers = [];
 }
 
+function limSlug(name) {
+  return 'lim-num-' + name.toLowerCase().replace(/\s+/g, '-');
+}
+
 function renderLimBar(name, usedPct, resetStr, resetTs) {
   const used = usedPct != null ? usedPct : 0;
   const color = barColor(used);
   const exhausted = used >= 100;
-  const numId = 'lim-num-' + name.toLowerCase().replace(/\s+/g, '-');
+  const numId = limSlug(name);
   return '<div class="lim-bar">' +
     '<div class="lim-bar-top">' +
       '<span class="lim-bar-name">' + name + '</span>' +
@@ -2087,12 +2290,52 @@ function renderLimits() {
   if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
   if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
   if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
+
+  var cx = __codexLimitsData;
+  if (cx) {
+    html += '<div class="lim-plan" style="margin-top:18px">Codex' + (cx.plan ? ' &middot; ' + cx.plan : '') + '</div>';
+    if (cx.error && cx.session_used == null && cx.week_used == null) {
+      html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cx.error + '</div>';
+    } else {
+      if (cx.session_used != null) html += renderLimBar(cx.session_label || 'Codex &#8212; Session', cx.session_used, cx.session_reset, cx.session_reset_ts);
+      if (cx.week_used != null)    html += renderLimBar(cx.week_label || 'Codex &#8212; Fen&#234;tre', cx.week_used, cx.week_reset, cx.week_reset_ts);
+    }
+  }
+
+  var cur = __cursorLimitsData;
+  if (cur) {
+    html += '<div class="lim-plan" style="margin-top:18px">Cursor' + (cur.plan ? ' &middot; ' + cur.plan : '') + '</div>';
+    if (cur.error && cur.period_spent == null) {
+      html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cur.error + '</div>';
+    } else if (cur.has_hard_limit && cur.hard_limit) {
+      var curPct = Math.min(100, Math.round((cur.period_spent || 0) / cur.hard_limit * 100));
+      var curColor = barColor(curPct);
+      html += '<div class="lim-bar"><div class="lim-bar-top">'
+        + '<span class="lim-bar-name">Cursor p&#233;riode</span>'
+        + '<span class="lim-bar-num" style="color:' + curColor + '">' + curPct + '%</span></div>'
+        + '<div class="lim-track"><div class="lim-fill" style="width:' + curPct + '%;background:' + curColor + '"></div></div>'
+        + '<div class="lim-bar-sub"><span>$' + (cur.period_spent||0).toFixed(2) + ' / $' + cur.hard_limit.toFixed(0) + '</span></div>'
+        + '</div>';
+    } else {
+      var periodEnd = cur.period_end_ts
+        ? ' &middot; jusqu&#39;au ' + new Date(cur.period_end_ts * 1000).toLocaleDateString('fr-FR', {day:'numeric', month:'short'})
+        : '';
+      html += '<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:16px">'
+        + (cur.period_spent != null ? '$' + cur.period_spent.toFixed(2) + ' utilis&#233;s ce mois' : 'Pas de limite de d&#233;pense configur&#233;e')
+        + periodEnd + '</div>';
+    }
+  }
+
   html += '</div>';
   el.innerHTML = html;
   drawContribHeatmap();
   startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
   startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
   startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
+  if (cx) {
+    if (cx.session_used != null) startCountdown(limSlug(cx.session_label || 'Codex &#8212; Session'), cx.session_used, cx.session_reset_ts);
+    if (cx.week_used != null)    startCountdown(limSlug(cx.week_label || 'Codex &#8212; Fen&#234;tre'), cx.week_used, cx.week_reset_ts);
+  }
 }
 
 """
