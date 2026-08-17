@@ -1380,115 +1380,130 @@ MAIN_HTML = """\
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:360px;background:#1c1c1e;color:#fff;
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+html,body{width:360px;background:#000;color:#c9ffe0;
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-size:12px;
   overflow-x:hidden;overflow-y:auto;-webkit-font-smoothing:antialiased}
-html::-webkit-scrollbar{width:4px}
-html::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
+html::-webkit-scrollbar{width:3px}
+html::-webkit-scrollbar-thumb{background:#173423;border-radius:0}
+::selection{background:#39ff88;color:#001a0d}
 
-/* tabs */
-.tabs{display:flex;padding:0 10px;border-bottom:1px solid rgba(255,255,255,.08)}
-.tab{padding:10px 7px 9px;font-size:12px;font-weight:500;color:rgba(255,255,255,.38);
-  cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
-  user-select:none;transition:color .15s}
-.tab:hover:not(.active){color:rgba(255,255,255,.6)}
-.tab.active{color:#fff;border-bottom-color:rgba(255,255,255,.65)}
-.tab-settings{margin-left:auto;background:none;border:none;color:rgba(255,255,255,.25);
-  font-size:18px;padding:9px 8px 8px;cursor:pointer;user-select:none;transition:color .15s;
-  line-height:1}
-.tab-settings:hover{color:rgba(255,255,255,.65)}
+/* header — prompt bar */
+.tabs{display:flex;flex-wrap:wrap;align-items:center;gap:5px;
+  padding:8px 10px 7px;border-bottom:1px solid #123422;background:#030805}
+.tabs::before{content:'tokenbar@usage:~$';width:100%;display:block;
+  color:#2f6b47;font-size:9.5px;letter-spacing:.02em;margin-bottom:5px}
+.tab{padding:3px 7px;font-size:10px;font-weight:700;color:#3f7a56;
+  cursor:pointer;user-select:none;letter-spacing:.03em;text-transform:uppercase;
+  border:1px solid #123422;background:#050b07}
+.tab:hover:not(.active){color:#7fffb0;border-color:#2f6b47}
+.tab.active{color:#001a0d;background:#39ff88;border-color:#39ff88}
+.tab-settings{margin-left:auto;background:#050b07;border:1px solid #123422;color:#3f7a56;
+  font-size:11px;padding:3px 7px;cursor:pointer;user-select:none;line-height:1}
+.tab-settings:hover{color:#7fffb0;border-color:#2f6b47}
 
-/* stats */
-.stats{display:grid;grid-template-columns:1fr 1fr;padding:16px 20px 8px;row-gap:14px}
-.lbl{font-size:12px;font-weight:500;color:rgba(255,255,255,.55);margin-bottom:3px}
-.val{font-size:26px;font-weight:700;letter-spacing:-.8px;line-height:1}
+/* stats — ledger rows, not cards */
+.stats{display:flex;flex-direction:column;border-bottom:1px solid #123422}
+.stats>div{display:flex;justify-content:space-between;align-items:baseline;
+  padding:6px 10px;border-top:1px dashed #0d2417}
+.stats>div:first-child{border-top:none}
+.lbl{font-size:9.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#3f7a56}
+.lbl::before{content:'> '}
+.val{font-size:15px;font-weight:700;letter-spacing:0;color:#eafff2}
 
 /* chart */
-.chart-wrap{padding:8px 20px 0;position:relative}
+.chart-wrap{padding:9px 10px 0;position:relative;border-bottom:1px solid #123422}
 canvas{display:block;width:100%}
-.chart-controls{display:flex;align-items:center;padding:3px 20px 4px}
-.chart-periods{display:flex;gap:1px;flex:1}
-.cp{background:none;border:none;color:rgba(255,255,255,.22);font-family:inherit;
-  font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;user-select:none}
-.cp:hover{color:rgba(255,255,255,.55)}
-.cp.active{color:rgba(255,255,255,.72);background:rgba(255,255,255,.08)}
-.chart-style-btn{background:none;border:none;color:rgba(255,255,255,.22);
-  font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer;
-  user-select:none;letter-spacing:.05em}
-.chart-style-btn:hover{color:rgba(255,255,255,.55)}
-#tip,#tip2{position:fixed;background:rgba(22,22,24,.97);border:1px solid rgba(255,255,255,.13);
-  border-radius:6px;padding:5px 9px;font-size:11px;color:rgba(255,255,255,.88);
+.chart-controls{display:flex;align-items:center;padding:5px 10px;gap:8px;border-bottom:1px solid #123422}
+.chart-periods{display:flex;gap:4px;flex:1}
+.cp{background:#050b07;border:1px solid #123422;color:#3f7a56;font-family:inherit;
+  font-size:9px;padding:2px 6px;cursor:pointer;user-select:none;text-transform:uppercase}
+.cp:hover{color:#7fffb0;border-color:#2f6b47}
+.cp.active{color:#001a0d;background:#39ff88;border-color:#39ff88}
+.chart-style-btn{background:#050b07;border:1px solid #123422;color:#3f7a56;
+  font-family:inherit;font-size:9px;padding:2px 6px;cursor:pointer;
+  user-select:none;letter-spacing:.04em;text-transform:uppercase}
+.chart-style-btn:hover{color:#7fffb0;border-color:#2f6b47}
+#tip,#tip2{position:fixed;background:#000;border:1px solid #39ff88;
+  padding:5px 8px;font-size:10.5px;color:#eafff2;
   pointer-events:none;display:none;white-space:nowrap;z-index:100}
-.chart-divider{padding:6px 20px 0;font-size:9px;color:rgba(255,255,255,.22);
+.chart-divider{padding:8px 10px 3px;font-size:9px;color:#3f7a56;
   text-transform:uppercase;letter-spacing:.06em}
+.chart-divider::before{content:'[ '}
+.chart-divider::after{content:' ]'}
 
 /* summary */
-.summary{padding:9px 20px 6px;font-size:12px;color:rgba(255,255,255,.45);line-height:1.75}
-.models-lnk{display:inline;font-size:12px;color:rgba(255,255,255,.28);cursor:pointer;
-  text-decoration:underline;text-decoration-color:rgba(255,255,255,.15);text-underline-offset:2px}
-.models-lnk:hover{color:rgba(255,255,255,.55)}
+.summary{padding:8px 10px;font-size:10.5px;color:#3f7a56;line-height:1.7;border-bottom:1px solid #123422}
+.summary::before{content:'# '}
+.models-lnk{display:inline;font-size:10.5px;color:#39ff88;cursor:pointer;
+  text-decoration:none;border-bottom:1px dotted #2f6b47}
+.models-lnk:hover{border-bottom-color:#39ff88}
 
-/* breakdown */
-.perf-section{padding:8px 16px 6px;border-top:1px solid rgba(255,255,255,.06)}
-.perf-title{font-size:9px;text-transform:uppercase;letter-spacing:.07em;
-  color:rgba(255,255,255,.2);margin-bottom:7px}
-.perf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.perf-cell{background:rgba(255,255,255,.04);border-radius:7px;padding:6px 9px}
-.perf-lbl{font-size:9px;color:rgba(255,255,255,.3);margin-bottom:2px;letter-spacing:.02em;
+/* breakdown — ledger rows */
+.perf-section{border-bottom:1px solid #123422}
+.perf-title{font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+  color:#3f7a56;padding:7px 10px 4px}
+.perf-title::before{content:'[ '}
+.perf-title::after{content:' ]'}
+.perf-grid{display:flex;flex-direction:column}
+.perf-cell{display:flex;align-items:baseline;justify-content:space-between;
+  padding:3px 10px}
+.perf-lbl{font-size:9.5px;color:#3f7a56;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-lbl::before{content:'· '}
+.perf-val{font-size:11.5px;font-weight:700;letter-spacing:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.perf-val{font-size:15px;font-weight:700;letter-spacing:-.5px;line-height:1.15;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.perf-sub{font-size:9px;color:rgba(255,255,255,.18);margin-top:1px}
-.perf-up{color:#4ade80}
-.perf-dn{color:#f87171}
-.perf-neu{color:rgba(255,255,255,.7)}
-.ds-row{padding:2px 20px 4px;font-size:11px;color:rgba(255,255,255,.38)}
-.ds-row span{color:rgba(255,255,255,.72)}
+.perf-sub{font-size:9px;color:#2f6b47;margin-left:5px}
+.perf-up{color:#39ff88}
+.perf-dn{color:#ff5c5c}
+.perf-neu{color:#eafff2}
+.ds-row{padding:5px 10px;font-size:10.5px;color:#3f7a56;border-top:1px dashed #0d2417}
+.ds-row span{color:#c9ffe0}
 /* quota bar */
-.quota-row{padding:7px 20px 9px;border-top:1px solid rgba(255,255,255,.06)}
-.quota-header{display:flex;justify-content:space-between;font-size:10px;
-  color:rgba(255,255,255,.4);margin-bottom:5px}
-.quota-track{height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden}
-.quota-fill{height:100%;width:0%;border-radius:3px;transition:width .4s,background .4s}
-.quota-footer{display:flex;justify-content:space-between;margin-top:4px;font-size:10px}
-.quota-spent{color:rgba(255,255,255,.65)}
-.quota-proj{color:rgba(255,255,255,.3)}
+.quota-row{padding:7px 10px 9px;border-bottom:1px solid #123422}
+.quota-header{display:flex;justify-content:space-between;font-size:9.5px;
+  text-transform:uppercase;letter-spacing:.03em;color:#3f7a56;margin-bottom:5px}
+.quota-track{height:3px;background:#0d2417;overflow:hidden}
+.quota-fill{height:100%;width:0%;transition:width .4s,background .4s}
+.quota-footer{display:flex;justify-content:space-between;margin-top:4px;font-size:9.5px}
+.quota-spent{color:#c9ffe0}
+.quota-proj{color:#3f7a56}
 /* tooltip élargi pour breakdown */
 #tip{min-width:160px;max-width:220px;line-height:1.5}
 
-/* footer */
-.footer{border-top:1px solid rgba(255,255,255,.08);display:flex;padding:4px 8px}
-.btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
-  font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:center}
-.btn:hover{background:rgba(255,255,255,.08)}
+/* footer — command links */
+.footer{border-top:1px solid #123422;display:flex;padding:7px 10px;gap:16px;background:#030805}
+.btn{background:none;border:none;color:#3f7a56;font-family:inherit;
+  font-size:10.5px;font-weight:600;padding:2px 0;cursor:pointer;
+  text-transform:uppercase;letter-spacing:.03em}
+.btn::before{content:'> '}
+.btn:hover{color:#7fffb0}
 
-/* ── Limites page ── */
+/* ── Limites page — sections en crochets + jauges ASCII ── */
 #page-limits{display:none}
-.lim-body{padding:16px 20px 10px}
-.lim-section{display:flex;align-items:center;gap:7px;margin:20px 0 10px;
-  padding-top:16px;border-top:1px solid rgba(255,255,255,.07)}
-.lim-section.first{margin-top:4px;padding-top:0;border-top:none}
-.lim-section-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.lim-section-name{font-size:11px;font-weight:700;letter-spacing:.04em;
-  text-transform:uppercase;color:rgba(255,255,255,.65)}
-.lim-section-plan{font-size:10px;color:rgba(255,255,255,.3)}
-.lim-bar{margin-bottom:20px}
-.lim-bar-top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px}
-.lim-bar-name{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
-  color:rgba(255,255,255,.38)}
-.lim-bar-num{font-size:28px;font-weight:700;letter-spacing:-.8px;line-height:1}
-.lim-track{height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-bottom:5px}
-.lim-fill{height:100%;border-radius:3px;transition:width .5s cubic-bezier(.4,0,.2,1)}
-.lim-bar-sub{display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,.25)}
-.lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
-.lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
+.lim-body{padding:0 0 8px}
+.lim-section{padding:9px 10px 6px;font-size:10px;font-weight:700;
+  letter-spacing:.04em;border-top:1px solid #123422}
+.lim-section.first{border-top:none}
+.lim-section-plan{opacity:.6;font-weight:500}
+.lim-bar{padding:5px 10px 9px}
+.lim-bar-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.lim-bar-name{font-size:10px;color:#3f7a56;text-transform:uppercase;letter-spacing:.03em}
+.lim-bar-num{font-size:16px;font-weight:700;letter-spacing:0;line-height:1}
+.lim-meter{font-size:13px;line-height:1.2;margin:3px 0;white-space:nowrap;overflow:hidden}
+.lim-meter .fl{letter-spacing:0}
+.lim-meter .em{letter-spacing:0;color:#123422}
+.lim-bar-sub{display:flex;justify-content:space-between;font-size:9.5px;color:#3f7a56}
+.lim-loading{padding:32px 10px;text-align:center;color:#3f7a56;font-size:11px}
+.lim-loading::before{content:'> '}
+.lim-error{padding:12px 10px;font-size:10.5px;color:#ff5c5c;line-height:1.5}
+.lim-error::before{content:'! '}
 .lim-ds-row{display:flex;justify-content:space-between;align-items:baseline;
-  padding:10px 0 0;border-top:1px solid rgba(255,255,255,.06);margin-top:4px}
-.lim-ds-label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
-  color:rgba(255,255,255,.38)}
-.lim-ds-val{font-size:22px;font-weight:700;letter-spacing:-.6px;color:#4ade80}
-.lim-ds-cur{font-size:11px;font-weight:500;color:rgba(255,255,255,.3);margin-left:3px}
-.btn-q{color:rgba(255,255,255,.3)}
+  padding:8px 10px;border-top:1px dashed #0d2417}
+.lim-ds-label{font-size:10px;color:#3f7a56;text-transform:uppercase;letter-spacing:.03em}
+.lim-ds-val{font-size:16px;font-weight:700;letter-spacing:0;color:#39ff88}
+.lim-ds-cur{font-size:9.5px;font-weight:500;color:#3f7a56;margin-left:3px}
+.btn-q{color:#5a2f2f}
+.btn-q:hover{color:#ff5c5c}
 </style></head><body>
 
 <div id="page-main">
@@ -1513,7 +1528,7 @@ canvas{display:block;width:100%}
   <canvas id="cv"></canvas>
   <div id="tip"></div>
 </div>
-<div id="provider-legend" style="display:none;padding:4px 20px 0;gap:12px;flex-wrap:wrap"></div>
+<div id="provider-legend" style="display:none;padding:4px 10px 0;gap:12px;flex-wrap:wrap"></div>
 <div class="chart-divider">estimated cost</div>
 <div class="chart-wrap">
   <canvas id="cv2"></canvas>
@@ -1532,41 +1547,35 @@ canvas{display:block;width:100%}
 <div class="summary">
   <div id="s-all">—</div>
   <div id="s-model">—</div>
-  <span class="models-lnk" onclick="act('models')">All models &#x2192;</span>
+  <span class="models-lnk" onclick="act('models')">all models &#x2192;</span>
 </div>
 
 <div id="perf-section" class="perf-section" style="display:none">
-  <div class="perf-title">Vitesse &amp; efficacité</div>
+  <div class="perf-title">vitesse &amp; efficacité</div>
   <div class="perf-grid">
     <div class="perf-cell">
-      <div class="perf-lbl">Rythme</div>
-      <div class="perf-val perf-neu" id="pf-tph">—</div>
-      <div class="perf-sub">tok / hr</div>
+      <div class="perf-lbl">rythme</div>
+      <div><span class="perf-val perf-neu" id="pf-tph">—</span><span class="perf-sub">tok/hr</span></div>
     </div>
     <div class="perf-cell">
-      <div class="perf-lbl">Cache hit</div>
-      <div class="perf-val" id="pf-hit">—</div>
-      <div class="perf-sub">% lectures</div>
+      <div class="perf-lbl">cache hit</div>
+      <div><span class="perf-val" id="pf-hit">—</span><span class="perf-sub">lectures</span></div>
     </div>
     <div class="perf-cell">
-      <div class="perf-lbl">Coût / 1M</div>
-      <div class="perf-val perf-neu" id="pf-rate">—</div>
-      <div class="perf-sub">taux effectif</div>
+      <div class="perf-lbl">coût / 1M</div>
+      <div><span class="perf-val perf-neu" id="pf-rate">—</span><span class="perf-sub">taux</span></div>
     </div>
     <div class="perf-cell">
       <div class="perf-lbl">vs moy. 7j</div>
-      <div class="perf-val" id="pf-vs7">—</div>
-      <div class="perf-sub">comparaison</div>
+      <div><span class="perf-val" id="pf-vs7">—</span></div>
     </div>
     <div class="perf-cell">
-      <div class="perf-lbl">Projection</div>
-      <div class="perf-val perf-neu" id="pf-proj">—</div>
-      <div class="perf-sub">fin de jour</div>
+      <div class="perf-lbl">projection</div>
+      <div><span class="perf-val perf-neu" id="pf-proj">—</span><span class="perf-sub">fin j.</span></div>
     </div>
     <div class="perf-cell">
-      <div class="perf-lbl">Top modèle</div>
-      <div class="perf-val perf-neu" id="pf-model">—</div>
-      <div class="perf-sub">aujourd'hui</div>
+      <div class="perf-lbl">top modèle</div>
+      <div><span class="perf-val perf-neu" id="pf-model">—</span></div>
     </div>
   </div>
 </div>
@@ -1574,7 +1583,7 @@ canvas{display:block;width:100%}
 
 <div id="quota-row" class="quota-row" style="display:none">
   <div class="quota-header">
-    <span>Quota mensuel Claude</span><span id="q-pct">—</span>
+    <span>quota mensuel claude</span><span id="q-pct">—</span>
   </div>
   <div class="quota-track"><div class="quota-fill" id="q-bar"></div></div>
   <div class="quota-footer">
@@ -1584,9 +1593,9 @@ canvas{display:block;width:100%}
 </div>
 
 <div class="footer">
-  <button class="btn" onclick="act('refresh')">&#x21BA; Refresh</button>
-  <button class="btn" onclick="act('flex')">&#x1F4E2; Flex</button>
-  <button class="btn btn-q" onclick="act('quit')">Quit</button>
+  <button class="btn" onclick="act('refresh')">refresh</button>
+  <button class="btn" onclick="act('flex')">flex</button>
+  <button class="btn btn-q" onclick="act('quit')">quit</button>
 </div>
 </div>
 
@@ -1602,12 +1611,12 @@ canvas{display:block;width:100%}
 </div>
 
 <div id="lim-body">
-  <div class="lim-loading">Chargement des limites&#x2026;</div>
+  <div class="lim-loading">chargement des limites&#x2026;</div>
 </div>
 
 <div class="footer">
-  <button class="btn" onclick="act('refreshLimits')">&#x21BA; Actualiser</button>
-  <button class="btn btn-q" onclick="act('quit')">Quit</button>
+  <button class="btn" onclick="act('refreshLimits')">actualiser</button>
+  <button class="btn btn-q" onclick="act('quit')">quit</button>
 </div>
 </div>
 
@@ -1706,7 +1715,7 @@ function renderTab(tab) {
   if (tab === 'all' && Object.keys(__dailyBySource).length) {
     legendEl.style.display = 'flex';
     legendEl.innerHTML = PROVIDER_ORDER.map(function(k){
-      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:rgba(255,255,255,.4)">'
+      return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:rgba(120,255,180,.5)">'
         + '<span style="width:6px;height:6px;border-radius:50%;background:' + PROVIDER_COLORS[k].hex + '"></span>'
         + PROVIDER_LABELS[k] + '</span>';
     }).join('');
@@ -1812,19 +1821,19 @@ function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
     ctx.font='9px -apple-system, sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';
     [0.25,0.5,0.75,1].forEach(function(lvl){
       const ly=bl-lvl*bMaxH;
-      ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;
+      ctx.strokeStyle='rgba(57,255,136,.10)';ctx.lineWidth=1;
       ctx.beginPath();ctx.moveTo(leftPad,ly);ctx.lineTo(cw,ly);ctx.stroke();
-      ctx.fillStyle='rgba(255,255,255,.22)';
+      ctx.fillStyle='rgba(120,255,180,.35)';
       ctx.fillText(fmtAxis(lvl*max),leftPad-5,ly);
     });
   }
-  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.setLineDash([2,5]);ctx.lineWidth=1;
+  ctx.strokeStyle='rgba(57,255,136,.28)';ctx.setLineDash([2,5]);ctx.lineWidth=1;
   ctx.beginPath();ctx.moveTo(leftPad,bl+2);ctx.lineTo(cw,bl+2);ctx.stroke();
   ctx.setLineDash([]);
   if(__chartStyle==='bars'){
     daily.forEach((d,i)=>{
       const r=vals[i]/max,bh=Math.max(2,r*bMaxH),x=i*(bw+gap)+gap+leftPad,y=bl-bh;
-      ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';
+      ctx.fillStyle='rgba(57,255,136,'+(0.35+0.55*r).toFixed(2)+')';
       drawBar(ctx,x,y,bw,bh,2);
       hitsRef.push({x0:x,x1:x+bw,cx:x+bw/2,y:y,date:d.date,val:vals[i]});
     });
@@ -1836,22 +1845,22 @@ function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
     }));
     if(__chartStyle==='area'){
       const grad=ctx.createLinearGradient(0,0,0,bl);
-      grad.addColorStop(0,'rgba(255,255,255,.28)');
-      grad.addColorStop(1,'rgba(255,255,255,.02)');
+      grad.addColorStop(0,'rgba(57,255,136,.30)');
+      grad.addColorStop(1,'rgba(57,255,136,.02)');
       ctx.fillStyle=grad;ctx.beginPath();
       ctx.moveTo(pts[0].x,bl);
       pts.forEach(p=>ctx.lineTo(p.x,p.y));
       ctx.lineTo(pts[pts.length-1].x,bl);
       ctx.closePath();ctx.fill();
     }
-    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;
+    ctx.strokeStyle='rgba(57,255,136,.85)';ctx.lineWidth=1.5;
     ctx.beginPath();
     pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
     ctx.stroke();
     pts.forEach(p=>{
       hitsRef.push({x0:p.x-bw/2,x1:p.x+bw/2,cx:p.x,y:p.y,date:p.date,val:p.val});
       ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);
-      ctx.fillStyle='rgba(255,255,255,'+(0.45+0.55*p.r).toFixed(2)+')';
+      ctx.fillStyle='rgba(57,255,136,'+(0.5+0.5*p.r).toFixed(2)+')';
       ctx.fill();
     });
   }
@@ -1870,11 +1879,11 @@ function drawStackedBars(daily) {
   ctx.font = '9px -apple-system,sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
   [0.25,0.5,0.75,1].forEach(function(lvl){
     const ly = bl-lvl*bMaxH;
-    ctx.strokeStyle='rgba(255,255,255,.07)'; ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(57,255,136,.10)'; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(leftPad,ly); ctx.lineTo(cw,ly); ctx.stroke();
-    ctx.fillStyle='rgba(255,255,255,.22)'; ctx.fillText(fmt(lvl*max),leftPad-5,ly);
+    ctx.fillStyle='rgba(120,255,180,.35)'; ctx.fillText(fmt(lvl*max),leftPad-5,ly);
   });
-  ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.setLineDash([2,5]); ctx.lineWidth=1;
+  ctx.strokeStyle='rgba(57,255,136,.28)'; ctx.setLineDash([2,5]); ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(leftPad,bl+2); ctx.lineTo(cw,bl+2); ctx.stroke();
   ctx.setLineDash([]);
   const bySource = __tab === 'all' && Object.keys(__dailyBySource).length > 0;
@@ -1898,7 +1907,7 @@ function drawStackedBars(daily) {
       });
     } else {
       const r = total/max;
-      ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';
+      ctx.fillStyle='rgba(57,255,136,'+(0.35+0.55*r).toFixed(2)+')';
       drawBar(ctx,x,bl-bh,bw,bh,2);
     }
     __chartHits.push({x0:x,x1:x+bw,cx:x+bw/2,y:bl-bh,date:d.date,val:total});
@@ -1919,7 +1928,7 @@ function buildTipHtml(hit) {
     const label = bySource ? PROVIDER_LABELS[key] : {cr:'Cache R',i:'Input',r:'Reasoning',cw:'Cache W',o:'Output'}[key];
     return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px">'
       +'<span><span style="color:'+col+'">●</span>&nbsp;'+label+'</span>'
-      +'<span style="color:rgba(255,255,255,.7)">'+fmt(v)+'&nbsp;<span style="opacity:.45">'+pct+'%</span></span>'
+      +'<span style="color:rgba(120,255,180,.85)">'+fmt(v)+'&nbsp;<span style="opacity:.55">'+pct+'%</span></span>'
       +'</div>';
   }).join('');
   return header+rows;
@@ -1995,7 +2004,7 @@ function renderQuota(d, settings) {
   document.getElementById('q-proj').textContent  = '~$' + proj.toFixed(2);
   const bar = document.getElementById('q-bar');
   bar.style.width = pct + '%';
-  bar.style.background = pct >= 90 ? '#f87171' : pct >= 70 ? '#fb923c' : '#4ade80';
+  bar.style.background = pct >= 90 ? '#ff5c5c' : pct >= 70 ? '#ffb454' : '#39ff88';
   row.style.display = '';
 }
 
@@ -2055,9 +2064,16 @@ function switchToLimits() {
 }
 
 function barColor(pct) {
-  if (pct >= 90) return '#f87171';
-  if (pct >= 70) return '#fb923c';
-  return '#4ade80';
+  if (pct >= 90) return '#ff5c5c';
+  if (pct >= 70) return '#ffb454';
+  return '#39ff88';
+}
+
+function asciiMeter(pct, width) {
+  width = width || 22;
+  var p = Math.max(0, Math.min(100, pct == null ? 0 : pct));
+  var filled = Math.round(p / 100 * width);
+  return '&#9608;'.repeat(filled) + '<span class="em">' + '&#9617;'.repeat(width - filled) + '</span>';
 }
 
 let __countdownTimers = [];
@@ -2083,10 +2099,10 @@ function renderLimBar(name, usedPct, resetStr, resetTs) {
         (exhausted && resetTs ? '&#x2026;' : used + '%') +
       '</span>' +
     '</div>' +
-    '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
+    '<div class="lim-meter" style="color:' + color + '">' + asciiMeter(used) + '</div>' +
     '<div class="lim-bar-sub">' +
-      '<span>' + (exhausted ? 'Limite atteinte' : used + '% utilis&#233;') + '</span>' +
-      (resetStr ? '<span>Reset ' + resetStr + '</span>' : '') +
+      '<span>' + (exhausted ? 'LIMIT REACHED' : used + '% USED') + '</span>' +
+      (resetStr ? '<span>RESET ' + resetStr.toUpperCase() + '</span>' : '') +
     '</div>' +
   '</div>';
 }
@@ -2119,38 +2135,34 @@ function renderUsageSummary() {
     {label:'Codex',       key:'codex'},
     {label:'Cursor',      key:'cursor'},
   ];
-  var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
-    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd&#39;hui</div>';
+  var html = '<div style="padding:9px 10px 8px;border-bottom:1px solid #123422;font-family:var(--mono,ui-monospace)">'
+    + '<div style="font-size:9px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
+    + 'color:#3f7a56;margin-bottom:8px">[ aujourd&#39;hui ]</div>';
   rows.forEach(function(r) {
     var s = __data[r.key];
     if (!s || !s.today_tok) return;
-    var cost = s.cost_today > 0 ? ' · $' + s.cost_today.toFixed(3) : '';
+    var cost = s.cost_today > 0 ? ' &middot; $' + s.cost_today.toFixed(3) : '';
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
-      + 'margin-bottom:5px;font-size:11px">'
-      + '<span style="color:rgba(255,255,255,.45)">'
-      + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;'
-      + 'background:' + PROVIDER_COLORS[r.key].hex + ';margin-right:6px"></span>'
+      + 'margin-bottom:4px;font-size:10.5px">'
+      + '<span style="color:' + PROVIDER_COLORS[r.key].hex + '">'
       + r.label + '</span>'
-      + '<span style="color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums">'
+      + '<span style="color:#c9ffe0;font-variant-numeric:tabular-nums">'
       + fmt(s.today_tok) + ' tok' + cost + '</span></div>';
   });
   var all = __data.all;
   if (all && all.today_tok) {
-    var totalCost = all.cost_today > 0 ? ' · $' + all.cost_today.toFixed(3) : '';
+    var totalCost = all.cost_today > 0 ? ' &middot; $' + all.cost_today.toFixed(3) : '';
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
-      + 'padding-top:6px;border-top:1px solid rgba(255,255,255,.06);font-size:12px;font-weight:600">'
-      + '<span style="color:rgba(255,255,255,.7)">Total</span>'
-      + '<span>' + fmt(all.today_tok) + ' tok' + totalCost + '</span></div>';
+      + 'padding-top:5px;border-top:1px dashed #0d2417;font-size:11px;font-weight:700">'
+      + '<span style="color:#eafff2">total</span>'
+      + '<span style="color:#39ff88">' + fmt(all.today_tok) + ' tok' + totalCost + '</span></div>';
   }
   return html + '</div>';
 }
 
 function sectionHeader(providerKey, name, plan, first) {
-  return '<div class="lim-section' + (first ? ' first' : '') + '">'
-    + '<span class="lim-section-dot" style="background:' + PROVIDER_COLORS[providerKey].hex + '"></span>'
-    + '<span class="lim-section-name">' + name + '</span>'
-    + (plan ? '<span class="lim-section-plan">&middot; ' + plan + '</span>' : '')
+  return '<div class="lim-section' + (first ? ' first' : '') + '" style="color:' + PROVIDER_COLORS[providerKey].hex + '">'
+    + '[ ' + name.toUpperCase() + (plan ? ' &middot; ' + plan.toUpperCase() : '') + ' ]'
     + '</div>';
 }
 
@@ -2208,7 +2220,7 @@ function renderLimits() {
       html += '<div class="lim-bar"><div class="lim-bar-top">'
         + '<span class="lim-bar-name">Mois</span>'
         + '<span class="lim-bar-num" style="color:' + curColor + '">' + curPct + '%</span></div>'
-        + '<div class="lim-track"><div class="lim-fill" style="width:' + curPct + '%;background:' + curColor + '"></div></div>'
+        + '<div class="lim-meter" style="color:' + curColor + '">' + asciiMeter(curPct) + '</div>'
         + '<div class="lim-bar-sub"><span>' + curSub + '</span></div></div>';
     }
   }
