@@ -1670,7 +1670,7 @@ function drawContribHeatmap() {
   var totalW = 312;
   var step   = Math.floor(totalW / 7);   // 44px
   var cell   = step - 4;                 // 40px
-  var topPad = 40;  // ligne mois/année + ligne jours
+  var topPad = 26;  // labels jours
   var legH   = 24;
 
   var mois = ['Janvier','Février','Mars','Avril','Mai','Juin',
@@ -1698,18 +1698,16 @@ function drawContribHeatmap() {
   var colors = ['#21262d','#0e4429','#006d32','#26a641','#39d353'];
   function lvl(c) { return !c?0:c<=2?1:c<=5?2:c<=9?3:4; }
 
-  // Nom du mois en haut à droite (sa propre ligne, au-dessus des jours)
-  ctx.font = '11px -apple-system,BlinkMacSystemFont,sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,.5)';
-  ctx.fillText(mois[today.getMonth()] + ' ' + today.getFullYear(), totalW, 15);
+  // Mois/année : injecté dans le header HTML (aligné avec "Contributions")
+  var monthLbl = document.getElementById('contrib-month');
+  if (monthLbl) monthLbl.textContent = mois[today.getMonth()] + ' ' + today.getFullYear();
 
   // Labels jours (Lu Ma Me Je Ve Sa Di) centrés sur chaque colonne
   ctx.font = '10px -apple-system,BlinkMacSystemFont,sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255,255,255,.4)';
   ['Lu','Ma','Me','Je','Ve','Sa','Di'].forEach(function(lbl, i) {
-    ctx.fillText(lbl, i * step + step / 2, 29);
+    ctx.fillText(lbl, i * step + step / 2, 15);
   });
 
   // Grille : row = semaine, col = jour de semaine (0=lun, 6=dim)
@@ -1888,8 +1886,11 @@ function renderLimits() {
   const el = document.getElementById('lim-body');
 
   var heatmapHtml = '<div style="padding:14px 16px 6px">'
+    + '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">'
     + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:rgba(255,255,255,.28);margin-bottom:8px">Contributions</div>'
+    + 'color:rgba(255,255,255,.28)">Contributions</div>'
+    + '<div id="contrib-month" style="font-size:11px;color:rgba(255,255,255,.5)"></div>'
+    + '</div>'
     + '<canvas id="contrib-canvas" style="display:block"></canvas>'
     + '</div>';
 
