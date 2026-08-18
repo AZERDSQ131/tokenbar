@@ -2697,6 +2697,7 @@ class AppDelegate(NSObject):
         self._alerted_threshold = {}
         self._awake_thread = None
         self._awake_stop = threading.Event()
+        self._caffeinate_proc = None
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
@@ -2953,10 +2954,15 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def toggle_awake(self):
-        print(f"[tokenbar] toggle_awake, thread actif={self._awake_thread is not None and self._awake_thread.is_alive()}", flush=True)
-        if self._awake_thread is not None and self._awake_thread.is_alive():
+        active = self._awake_thread is not None and self._awake_thread.is_alive()
+        print(f"[tokenbar] toggle_awake, actif={active}", flush=True)
+        if active:
             self.stop_awake()
         else:
+            self._caffeinate_proc = subprocess.Popen(
+                ["/usr/bin/caffeinate", "-di"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
             self._awake_stop.clear()
             self._awake_thread = threading.Thread(target=self._awake_loop, daemon=True)
             self._awake_thread.start()
@@ -2985,6 +2991,9 @@ class AppDelegate(NSObject):
     def stop_awake(self):
         self._awake_stop.set()
         self._awake_thread = None
+        if self._caffeinate_proc is not None and self._caffeinate_proc.poll() is None:
+            self._caffeinate_proc.terminate()
+        self._caffeinate_proc = None
 
     @objc.python_method
     def flex(self):
