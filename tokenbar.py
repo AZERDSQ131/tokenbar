@@ -28,8 +28,8 @@ from AppKit import (
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL, NSNotificationCenter
 from Quartz import (
-    CGEventCreateMouseEvent, CGEventPost, CGEventCreate, CGEventGetLocation,
-    kCGEventMouseMoved, kCGHIDEventTap, kCGMouseButtonLeft,
+    CGEventCreate, CGEventGetLocation,
+    CGWarpMouseCursorPosition, CGAssociateMouseAndMouseCursorPosition,
 )
 
 OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
@@ -2979,10 +2979,8 @@ class AppDelegate(NSObject):
                     start = CGEventGetLocation(CGEventCreate(None)).x
                     for i in range(1, steps + 1):
                         x = start + (target - start) * i / steps
-                        ev = CGEventCreateMouseEvent(
-                            None, kCGEventMouseMoved, (x, loc.y), kCGMouseButtonLeft
-                        )
-                        CGEventPost(kCGHIDEventTap, ev)
+                        CGWarpMouseCursorPosition((x, loc.y))
+                        CGAssociateMouseAndMouseCursorPosition(True)
                         time.sleep(0.15 / steps)
                 print(f"[tokenbar] souris bougée près de ({loc.x:.0f}, {loc.y:.0f})", flush=True)
             except Exception:
