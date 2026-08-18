@@ -8,14 +8,16 @@ echo "Démarré — mouvement toutes les ${INTERVAL}s. Ctrl+C pour arrêter."
 while true; do
     OUT=$(python3 - <<'PYEOF'
 from AppKit import NSEvent, NSScreen
-from Quartz import CGWarpMouseCursorPosition
+from Quartz import CGWarpMouseCursorPosition, CGAssociateMouseAndMouseCursorPosition
 
 loc = NSEvent.mouseLocation()
 screen = NSScreen.screens()[0].frame()
 x, y = loc.x, screen.size.height - loc.y
 
 CGWarpMouseCursorPosition((x + 1, y))
+CGAssociateMouseAndMouseCursorPosition(True)
 CGWarpMouseCursorPosition((x, y))
+CGAssociateMouseAndMouseCursorPosition(True)
 
 print(f"{x:.0f} {y:.0f}")
 PYEOF
