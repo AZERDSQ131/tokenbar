@@ -2662,17 +2662,22 @@ class MsgHandler(NSObject):
     _app = None
     def userContentController_didReceiveScriptMessage_(self, uc, msg):
         n = msg.name()
-        if   n == "refresh" and self._app: self._app.inject_data()
-        elif n == "quit":
-            if self._app: self._app.stop_awake()
-            NSApp.terminate_(None)
-        elif n == "resize"  and self._app: self._app.resize_popover(int(msg.body()))
-        elif n == "models"  and self._app: self._app.show_models_window()
-        elif n == "flex"    and self._app: self._app.flex()
-        elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
-        elif n == "settings"  and self._app: self._app.show_settings_window()
-        elif n == "refreshLimits" and self._app: self._app.refresh_limits()
-        elif n == "toggleAwake" and self._app: self._app.toggle_awake()
+        print(f"[tokenbar] message reçu: {n}", flush=True)
+        try:
+            if   n == "refresh" and self._app: self._app.inject_data()
+            elif n == "quit":
+                if self._app: self._app.stop_awake()
+                NSApp.terminate_(None)
+            elif n == "resize"  and self._app: self._app.resize_popover(int(msg.body()))
+            elif n == "models"  and self._app: self._app.show_models_window()
+            elif n == "flex"    and self._app: self._app.flex()
+            elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
+            elif n == "settings"  and self._app: self._app.show_settings_window()
+            elif n == "refreshLimits" and self._app: self._app.refresh_limits()
+            elif n == "toggleAwake" and self._app: self._app.toggle_awake()
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
 
 class NavDelegate(NSObject):
@@ -2948,6 +2953,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def toggle_awake(self):
+        print(f"[tokenbar] toggle_awake, thread actif={self._awake_thread is not None and self._awake_thread.is_alive()}", flush=True)
         if self._awake_thread is not None and self._awake_thread.is_alive():
             self.stop_awake()
         else:
@@ -2958,7 +2964,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def _awake_loop(self):
-        log = Path.home() / ".tokenbar_awake.log"
+        print("[tokenbar] awake thread démarré", flush=True)
         while not self._awake_stop.is_set():
             try:
                 loc = CGEventGetLocation(CGEventCreate(None))
@@ -2968,12 +2974,12 @@ class AppDelegate(NSObject):
                     )
                     CGEventPost(kCGHIDEventTap, ev)
                     time.sleep(0.05)
-            except Exception as e:
-                try:
-                    log.write_text(f"{datetime.now()} — erreur: {e!r}\n")
-                except Exception:
-                    pass
+                print(f"[tokenbar] souris bougée près de ({loc.x:.0f}, {loc.y:.0f})", flush=True)
+            except Exception:
+                import traceback
+                traceback.print_exc()
             self._awake_stop.wait(5.0)
+        print("[tokenbar] awake thread arrêté", flush=True)
 
     @objc.python_method
     def stop_awake(self):
