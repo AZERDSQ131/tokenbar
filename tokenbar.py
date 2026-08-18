@@ -2968,7 +2968,7 @@ class AppDelegate(NSObject):
         while not self._awake_stop.is_set():
             try:
                 loc = CGEventGetLocation(CGEventCreate(None))
-                for dx in (1, -1):
+                for dx in (50, -50):
                     ev = CGEventCreateMouseEvent(
                         None, kCGEventMouseMoved, (loc.x + dx, loc.y), kCGMouseButtonLeft
                     )
