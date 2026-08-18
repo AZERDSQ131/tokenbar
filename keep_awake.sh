@@ -1,20 +1,26 @@
 #!/bin/bash
-# Bouge légèrement la souris toutes les 60s pour empêcher la mise en veille
+# Bouge légèrement la souris toutes les N secondes pour empêcher la mise en veille
 
 INTERVAL="${1:-60}"
 
 echo "Démarré — mouvement toutes les ${INTERVAL}s. Ctrl+C pour arrêter."
 
 while true; do
-    # Récupère la position actuelle
-    POS=$(osascript -e 'tell application "System Events" to return (position of (the mouse))')
-    X=$(echo "$POS" | awk -F',' '{print $1}' | tr -d ' ')
-    Y=$(echo "$POS" | awk -F',' '{print $2}' | tr -d ' ')
+    OUT=$(python3 - <<'PYEOF'
+from AppKit import NSEvent, NSScreen
+from Quartz import CGWarpMouseCursorPosition
 
-    # Bouge d'un pixel à droite puis revient
-    osascript -e "tell application \"System Events\" to set the mouse to {$((X+1)), ${Y}}"
-    sleep 0.1
-    osascript -e "tell application \"System Events\" to set the mouse to {${X}, ${Y}}"
+loc = NSEvent.mouseLocation()
+screen = NSScreen.screens()[0].frame()
+x, y = loc.x, screen.size.height - loc.y
+
+CGWarpMouseCursorPosition((x + 1, y))
+CGWarpMouseCursorPosition((x, y))
+
+print(f"{x:.0f} {y:.0f}")
+PYEOF
+    )
+    read -r X Y <<< "$OUT"
 
     echo "$(date '+%H:%M:%S') — souris bougée en (${X}, ${Y})"
     sleep "$INTERVAL"
