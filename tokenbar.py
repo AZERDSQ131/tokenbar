@@ -2974,12 +2974,16 @@ class AppDelegate(NSObject):
         while not self._awake_stop.is_set():
             try:
                 loc = CGEventGetLocation(CGEventCreate(None))
-                for dx in (50, -50):
-                    ev = CGEventCreateMouseEvent(
-                        None, kCGEventMouseMoved, (loc.x + dx, loc.y), kCGMouseButtonLeft
-                    )
-                    CGEventPost(kCGHIDEventTap, ev)
-                    time.sleep(0.05)
+                steps = 20
+                for target in (loc.x + 50, loc.x):
+                    start = CGEventGetLocation(CGEventCreate(None)).x
+                    for i in range(1, steps + 1):
+                        x = start + (target - start) * i / steps
+                        ev = CGEventCreateMouseEvent(
+                            None, kCGEventMouseMoved, (x, loc.y), kCGMouseButtonLeft
+                        )
+                        CGEventPost(kCGHIDEventTap, ev)
+                        time.sleep(0.15 / steps)
                 print(f"[tokenbar] souris bougée près de ({loc.x:.0f}, {loc.y:.0f})", flush=True)
             except Exception:
                 import traceback
