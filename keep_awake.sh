@@ -1,7 +1,7 @@
 #!/bin/bash
 # Bouge légèrement la souris toutes les 60s pour empêcher la mise en veille
 
-INTERVAL=60
+INTERVAL="${1:-60}"
 
 echo "Démarré — mouvement toutes les ${INTERVAL}s. Ctrl+C pour arrêter."
 

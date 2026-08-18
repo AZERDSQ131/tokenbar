@@ -1492,6 +1492,8 @@ canvas{display:block;width:100%}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.75);font-family:inherit;
   font-size:13px;padding:7px 10px;border-radius:7px;cursor:pointer;text-align:center}
 .btn:hover{background:rgba(255,255,255,.08)}
+.btn-awake{flex:0 0 auto;width:30px;padding:7px 0;font-size:14px}
+.btn-awake.active{color:#30d158;background:rgba(48,209,88,.12)}
 
 /* ── Limites page ── */
 #page-limits{display:none}
@@ -1616,6 +1618,7 @@ canvas{display:block;width:100%}
 
 <div class="footer">
   <button class="btn" onclick="act('refresh')">&#x21BA; Refresh</button>
+  <button class="btn btn-awake" id="awake-btn" onclick="act('toggleAwake')" title="Anti-veille (bouge la souris)">&#x1F5B1;</button>
   <button class="btn" onclick="act('flex')">&#x1F4E2; Flex</button>
   <button class="btn btn-q" onclick="act('quit')">Quit</button>
 </div>
@@ -2036,6 +2039,10 @@ function injectData(d) {
   if(d.limits != null){__limitsData = d.limits;}
   if(d.codex_limits != null){__codexLimitsData = d.codex_limits;}
   if(d.cursor_limits != null){__cursorLimitsData = d.cursor_limits;}
+  if(d.awake_running != null){
+    var ab=document.getElementById('awake-btn');
+    if(ab) ab.classList.toggle('active', d.awake_running);
+  }
   if(__onLimitsPage){
     renderLimits();
   } else {
@@ -2652,13 +2659,16 @@ class MsgHandler(NSObject):
     def userContentController_didReceiveScriptMessage_(self, uc, msg):
         n = msg.name()
         if   n == "refresh" and self._app: self._app.inject_data()
-        elif n == "quit":                  NSApp.terminate_(None)
+        elif n == "quit":
+            if self._app: self._app.stop_awake()
+            NSApp.terminate_(None)
         elif n == "resize"  and self._app: self._app.resize_popover(int(msg.body()))
         elif n == "models"  and self._app: self._app.show_models_window()
         elif n == "flex"    and self._app: self._app.flex()
         elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
         elif n == "settings"  and self._app: self._app.show_settings_window()
         elif n == "refreshLimits" and self._app: self._app.refresh_limits()
+        elif n == "toggleAwake" and self._app: self._app.toggle_awake()
 
 
 class NavDelegate(NSObject):
@@ -2676,6 +2686,7 @@ class AppDelegate(NSObject):
         self._timer = None
         self._notified_date = None
         self._alerted_threshold = {}
+        self._awake_proc = None
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
@@ -2691,7 +2702,7 @@ class AppDelegate(NSObject):
 
         cfg = WKWebViewConfiguration.alloc().init()
         uc  = cfg.userContentController()
-        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings", "refreshLimits"):
+        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings", "refreshLimits", "toggleAwake"):
             uc.addScriptMessageHandler_name_(self._msg, n)
 
 
@@ -2899,7 +2910,8 @@ class AppDelegate(NSObject):
     def _inject_js(self, data):
         if not data: return
         payload = dict(data, settings=_SETTINGS,
-                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES])
+                       builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES],
+                       awake_running=self._awake_proc is not None and self._awake_proc.poll() is None)
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
@@ -2928,6 +2940,24 @@ class AppDelegate(NSObject):
             self._start_timer()
             self.inject_data()
         except: pass
+
+    @objc.python_method
+    def toggle_awake(self):
+        if self._awake_proc is not None and self._awake_proc.poll() is None:
+            self.stop_awake()
+        else:
+            script = Path(__file__).resolve().parent / "keep_awake.sh"
+            self._awake_proc = subprocess.Popen(
+                ["/bin/bash", str(script), "5"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        self.inject_data()
+
+    @objc.python_method
+    def stop_awake(self):
+        if self._awake_proc is not None and self._awake_proc.poll() is None:
+            self._awake_proc.terminate()
+        self._awake_proc = None
 
     @objc.python_method
     def flex(self):
