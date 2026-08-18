@@ -27,6 +27,10 @@ from AppKit import (
 )
 from WebKit import WKWebView, WKWebViewConfiguration, WKUserScript
 from Foundation import NSTimer, NSURL, NSNotificationCenter
+from Quartz import (
+    CGEventCreateMouseEvent, CGEventPost, CGEventCreate, CGEventGetLocation,
+    kCGEventMouseMoved, kCGHIDEventTap, kCGMouseButtonLeft,
+)
 
 OC_DB       = Path.home() / ".local/share/opencode/opencode.db"
 OC_DB_DEV   = Path.home() / ".local/share/opencode/opencode-dev.db"
@@ -2686,7 +2690,8 @@ class AppDelegate(NSObject):
         self._timer = None
         self._notified_date = None
         self._alerted_threshold = {}
-        self._awake_proc = None
+        self._awake_thread = None
+        self._awake_stop = threading.Event()
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
@@ -2911,7 +2916,7 @@ class AppDelegate(NSObject):
         if not data: return
         payload = dict(data, settings=_SETTINGS,
                        builtin_rates=[{"key": k, "rate": r} for k, r in BLENDED_RATES],
-                       awake_running=self._awake_proc is not None and self._awake_proc.poll() is None)
+                       awake_running=self._awake_thread is not None and self._awake_thread.is_alive())
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
@@ -2943,21 +2948,37 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def toggle_awake(self):
-        if self._awake_proc is not None and self._awake_proc.poll() is None:
+        if self._awake_thread is not None and self._awake_thread.is_alive():
             self.stop_awake()
         else:
-            script = Path(__file__).resolve().parent / "keep_awake.sh"
-            self._awake_proc = subprocess.Popen(
-                ["/bin/bash", str(script), "5"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            self._awake_stop.clear()
+            self._awake_thread = threading.Thread(target=self._awake_loop, daemon=True)
+            self._awake_thread.start()
         self.inject_data()
 
     @objc.python_method
+    def _awake_loop(self):
+        log = Path.home() / ".tokenbar_awake.log"
+        while not self._awake_stop.is_set():
+            try:
+                loc = CGEventGetLocation(CGEventCreate(None))
+                for dx in (1, -1):
+                    ev = CGEventCreateMouseEvent(
+                        None, kCGEventMouseMoved, (loc.x + dx, loc.y), kCGMouseButtonLeft
+                    )
+                    CGEventPost(kCGHIDEventTap, ev)
+                    time.sleep(0.05)
+            except Exception as e:
+                try:
+                    log.write_text(f"{datetime.now()} — erreur: {e!r}\n")
+                except Exception:
+                    pass
+            self._awake_stop.wait(5.0)
+
+    @objc.python_method
     def stop_awake(self):
-        if self._awake_proc is not None and self._awake_proc.poll() is None:
-            self._awake_proc.terminate()
-        self._awake_proc = None
+        self._awake_stop.set()
+        self._awake_thread = None
 
     @objc.python_method
     def flex(self):
