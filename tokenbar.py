@@ -1499,32 +1499,6 @@ canvas{display:block;width:100%}
 .btn-awake{flex:0 0 auto;width:30px;padding:7px 0;font-size:14px}
 .btn-awake.active{color:#30d158;background:rgba(48,209,88,.12)}
 
-/* ── Limites page ── */
-#page-limits{display:none}
-.lim-body{padding:16px 20px 10px}
-.lim-section{display:flex;align-items:center;gap:7px;margin:20px 0 10px;
-  padding-top:16px;border-top:1px solid rgba(255,255,255,.07)}
-.lim-section.first{margin-top:4px;padding-top:0;border-top:none}
-.lim-section-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.lim-section-name{font-size:11px;font-weight:700;letter-spacing:.04em;
-  text-transform:uppercase;color:rgba(255,255,255,.65)}
-.lim-section-plan{font-size:10px;color:rgba(255,255,255,.3)}
-.lim-bar{margin-bottom:20px}
-.lim-bar-top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:7px}
-.lim-bar-name{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
-  color:rgba(255,255,255,.38)}
-.lim-bar-num{font-size:28px;font-weight:700;letter-spacing:-.8px;line-height:1}
-.lim-track{height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;margin-bottom:5px}
-.lim-fill{height:100%;border-radius:3px;transition:width .5s cubic-bezier(.4,0,.2,1)}
-.lim-bar-sub{display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,.25)}
-.lim-loading{padding:32px 20px;text-align:center;color:rgba(255,255,255,.3);font-size:12px}
-.lim-error{padding:14px 20px;font-size:11px;color:rgba(255,80,80,.6);line-height:1.5}
-.lim-ds-row{display:flex;justify-content:space-between;align-items:baseline;
-  padding:10px 0 0;border-top:1px solid rgba(255,255,255,.06);margin-top:4px}
-.lim-ds-label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
-  color:rgba(255,255,255,.38)}
-.lim-ds-val{font-size:22px;font-weight:700;letter-spacing:-.6px;color:#4ade80}
-.lim-ds-cur{font-size:11px;font-weight:500;color:rgba(255,255,255,.3);margin-left:3px}
 .btn-q{color:rgba(255,255,255,.3)}
 </style></head><body>
 
@@ -1535,7 +1509,6 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab"        data-tab="cursor"       onclick="switchTab('cursor')">Cursor</div>
-  <div class="tab"        data-tab="limits"       onclick="switchToLimits()">Usage</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -1628,27 +1601,6 @@ canvas{display:block;width:100%}
 </div>
 </div>
 
-<div id="page-limits">
-<div class="tabs">
-  <div class="tab"  data-tab="all"         onclick="switchTab('all')">All</div>
-  <div class="tab"  data-tab="claude_code"  onclick="switchTab('claude_code')">Claude</div>
-  <div class="tab"  data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
-  <div class="tab"  data-tab="codex"        onclick="switchTab('codex')">Codex</div>
-  <div class="tab"  data-tab="cursor"       onclick="switchTab('cursor')">Cursor</div>
-  <div class="tab active" data-tab="limits" onclick="switchToLimits()">Usage</div>
-  <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
-</div>
-
-<div id="lim-body">
-  <div class="lim-loading">Chargement des limites&#x2026;</div>
-</div>
-
-<div class="footer">
-  <button class="btn" onclick="act('refreshLimits')">&#x21BA; Actualiser</button>
-  <button class="btn btn-q" onclick="act('quit')">Quit</button>
-</div>
-</div>
-
 </body></html>
 """
 
@@ -1701,8 +1653,6 @@ function fmtDate(s){
 }
 
 function switchTab(tab) {
-  __onLimitsPage = false;
-  document.getElementById('page-limits').style.display = 'none';
   document.getElementById('page-main').style.display = '';
   __tab = tab;
   document.querySelectorAll('.tab').forEach(t =>
@@ -2040,19 +1990,12 @@ function renderQuota(d, settings) {
 function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
-  if(d.limits != null){__limitsData = d.limits;}
-  if(d.codex_limits != null){__codexLimitsData = d.codex_limits;}
-  if(d.cursor_limits != null){__cursorLimitsData = d.cursor_limits;}
   if(d.awake_running != null){
     var ab=document.getElementById('awake-btn');
     if(ab) ab.classList.toggle('active', d.awake_running);
   }
-  if(__onLimitsPage){
-    renderLimits();
-  } else {
-    renderTab(__tab);
-    renderQuota(d, __settings);
-  }
+  renderTab(__tab);
+  renderQuota(d, __settings);
   requestAnimationFrame(function(){
     try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
   });
@@ -2077,193 +2020,6 @@ function act(n,p){try{window.webkit.messageHandlers[n].postMessage(p||null)}catc
 function setColor(hex){
   __settings.accent_color=hex;
   act('saveSettings',JSON.stringify(__settings));
-}
-
-let __limitsData = null;
-let __codexLimitsData = null;
-let __cursorLimitsData = null;
-let __onLimitsPage = false;
-
-function switchToLimits() {
-  __onLimitsPage = true;
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('[data-tab="limits"]').forEach(t => t.classList.add('active'));
-  document.getElementById('page-main').style.display = 'none';
-  document.getElementById('page-limits').style.display = 'block';
-  renderLimits();
-  requestAnimationFrame(function(){
-    try{window.webkit.messageHandlers.resize.postMessage(document.body.scrollHeight)}catch(e){}
-  });
-}
-
-function barColor(pct) {
-  if (pct >= 90) return '#f87171';
-  if (pct >= 70) return '#fb923c';
-  return '#4ade80';
-}
-
-let __countdownTimers = [];
-
-function clearCountdowns() {
-  __countdownTimers.forEach(function(id) { clearInterval(id); });
-  __countdownTimers = [];
-}
-
-function limSlug(name) {
-  return 'lim-num-' + name.toLowerCase().replace(/\s+/g, '-');
-}
-
-function renderLimBar(name, usedPct, resetStr, resetTs) {
-  const used = usedPct != null ? usedPct : 0;
-  const color = barColor(used);
-  const exhausted = used >= 100;
-  const numId = limSlug(name);
-  return '<div class="lim-bar">' +
-    '<div class="lim-bar-top">' +
-      '<span class="lim-bar-name">' + name + '</span>' +
-      '<span class="lim-bar-num" id="' + numId + '" style="color:' + color + '">' +
-        (exhausted && resetTs ? '&#x2026;' : used + '%') +
-      '</span>' +
-    '</div>' +
-    '<div class="lim-track"><div class="lim-fill" style="width:' + used + '%;background:' + color + '"></div></div>' +
-    '<div class="lim-bar-sub">' +
-      '<span>' + (exhausted ? 'Limite atteinte' : used + '% utilis&#233;') + '</span>' +
-      (resetStr ? '<span>Reset ' + resetStr + '</span>' : '') +
-    '</div>' +
-  '</div>';
-}
-
-function startCountdown(elId, usedPct, resetTs) {
-  if (usedPct < 100 || !resetTs) return;
-  const el = document.getElementById(elId);
-  if (!el) return;
-  function tick() {
-    const diff = resetTs - Date.now() / 1000;
-    if (diff <= 0) { el.textContent = '0s'; return true; }
-    const h = Math.floor(diff / 3600);
-    const m = Math.floor((diff % 3600) / 60);
-    const s = Math.floor(diff % 60);
-    if (h > 0) el.textContent = h + 'h ' + m + 'm ' + s + 's';
-    else if (m > 0) el.textContent = m + 'm ' + s + 's';
-    else el.textContent = s + 's';
-    return false;
-  }
-  tick();
-  var id = setInterval(function() { if (tick()) clearInterval(id); }, 1000);
-  __countdownTimers.push(id);
-}
-
-function renderUsageSummary() {
-  if (!__data) return '';
-  var rows = [
-    {label:'Claude Code', key:'claude_code'},
-    {label:'OpenCode',    key:'opencode'},
-    {label:'Codex',       key:'codex'},
-    {label:'Cursor',      key:'cursor'},
-  ];
-  var html = '<div style="padding:12px 20px 10px;border-bottom:1px solid rgba(255,255,255,.07)">'
-    + '<div style="font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;'
-    + 'color:rgba(255,255,255,.28);margin-bottom:10px">Aujourd&#39;hui</div>';
-  rows.forEach(function(r) {
-    var s = __data[r.key];
-    if (!s || !s.today_tok) return;
-    var cost = s.cost_today > 0 ? ' · $' + s.cost_today.toFixed(3) : '';
-    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
-      + 'margin-bottom:5px;font-size:11px">'
-      + '<span style="color:rgba(255,255,255,.45)">'
-      + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;'
-      + 'background:' + PROVIDER_COLORS[r.key].hex + ';margin-right:6px"></span>'
-      + r.label + '</span>'
-      + '<span style="color:rgba(255,255,255,.85);font-variant-numeric:tabular-nums">'
-      + fmt(s.today_tok) + ' tok' + cost + '</span></div>';
-  });
-  var all = __data.all;
-  if (all && all.today_tok) {
-    var totalCost = all.cost_today > 0 ? ' · $' + all.cost_today.toFixed(3) : '';
-    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;'
-      + 'padding-top:6px;border-top:1px solid rgba(255,255,255,.06);font-size:12px;font-weight:600">'
-      + '<span style="color:rgba(255,255,255,.7)">Total</span>'
-      + '<span>' + fmt(all.today_tok) + ' tok' + totalCost + '</span></div>';
-  }
-  return html + '</div>';
-}
-
-function sectionHeader(providerKey, name, plan, first) {
-  return '<div class="lim-section' + (first ? ' first' : '') + '">'
-    + '<span class="lim-section-dot" style="background:' + PROVIDER_COLORS[providerKey].hex + '"></span>'
-    + '<span class="lim-section-name">' + name + '</span>'
-    + (plan ? '<span class="lim-section-plan">&middot; ' + plan + '</span>' : '')
-    + '</div>';
-}
-
-function renderLimits() {
-  clearCountdowns();
-  const lim = __limitsData;
-  const el = document.getElementById('lim-body');
-
-  if (!lim) {
-    el.innerHTML = renderUsageSummary()
-      + '<div class="lim-loading">Chargement&#x2026;<br><span style="font-size:10px;opacity:.5">~10s au premier lancement</span></div>';
-    return;
-  }
-
-  var html = renderUsageSummary() + '<div class="lim-body">';
-
-  html += sectionHeader('claude_code', 'Claude Code', lim.plan, true);
-  if (lim.error && lim.session_used == null && lim.week_used == null) {
-    html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + lim.error + '</div>';
-  } else {
-    if (lim.session_used != null) html += renderLimBar('Session (5h)', lim.session_used, lim.session_reset, lim.session_reset_ts);
-    if (lim.week_used != null)    html += renderLimBar('Semaine', lim.week_used, lim.week_reset, lim.week_reset_ts);
-    if (lim.opus_used != null)    html += renderLimBar('Opus / Sonnet', lim.opus_used, lim.opus_reset, lim.opus_reset_ts);
-  }
-
-  var cx = __codexLimitsData;
-  if (cx) {
-    html += sectionHeader('codex', 'Codex', cx.plan, false);
-    if (cx.error && cx.session_used == null && cx.week_used == null) {
-      html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cx.error + '</div>';
-    } else {
-      if (cx.session_used != null) html += renderLimBar(cx.session_label || 'Codex &#8212; Session', cx.session_used, cx.session_reset, cx.session_reset_ts);
-      if (cx.week_used != null)    html += renderLimBar(cx.week_label || 'Codex &#8212; Fen&#234;tre', cx.week_used, cx.week_reset, cx.week_reset_ts);
-    }
-  }
-
-  var cur = __cursorLimitsData;
-  if (cur) {
-    html += sectionHeader('cursor', 'Cursor', cur.plan, false);
-    if (cur.error && cur.period_spent == null) {
-      html += '<div class="lim-error">&#x26A0;&#xFE0F; ' + cur.error + '</div>';
-    } else {
-      var hasCap = cur.has_hard_limit && cur.hard_limit;
-      var curPct, curSub;
-      if (hasCap) {
-        curPct = Math.min(100, Math.round((cur.period_spent || 0) / cur.hard_limit * 100));
-        curSub = '$' + (cur.period_spent||0).toFixed(2) + ' / $' + cur.hard_limit.toFixed(0);
-      } else {
-        var now = new Date();
-        var dim = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
-        curPct = Math.round(now.getDate()/dim*100);
-        curSub = '$' + (cur.period_spent||0).toFixed(2) + ' d&#233;pens&#233;s &middot; jour ' + now.getDate() + '/' + dim;
-      }
-      var curColor = barColor(curPct);
-      html += '<div class="lim-bar"><div class="lim-bar-top">'
-        + '<span class="lim-bar-name">Mois</span>'
-        + '<span class="lim-bar-num" style="color:' + curColor + '">' + curPct + '%</span></div>'
-        + '<div class="lim-track"><div class="lim-fill" style="width:' + curPct + '%;background:' + curColor + '"></div></div>'
-        + '<div class="lim-bar-sub"><span>' + curSub + '</span></div></div>';
-    }
-  }
-
-  html += '</div>';
-  el.innerHTML = html;
-  startCountdown('lim-num-session-(5h)', lim.session_used, lim.session_reset_ts);
-  startCountdown('lim-num-semaine', lim.week_used, lim.week_reset_ts);
-  startCountdown('lim-num-opus-/-sonnet', lim.opus_used, lim.opus_reset_ts);
-  if (cx) {
-    if (cx.session_used != null) startCountdown(limSlug(cx.session_label || 'Codex &#8212; Session'), cx.session_used, cx.session_reset_ts);
-    if (cx.week_used != null)    startCountdown(limSlug(cx.week_label || 'Codex &#8212; Fen&#234;tre'), cx.week_used, cx.week_reset_ts);
-  }
 }
 
 """
@@ -2673,7 +2429,6 @@ class MsgHandler(NSObject):
             elif n == "flex"    and self._app: self._app.flex()
             elif n == "saveSettings" and self._app: self._app.save_settings_(msg.body())
             elif n == "settings"  and self._app: self._app.show_settings_window()
-            elif n == "refreshLimits" and self._app: self._app.refresh_limits()
             elif n == "toggleAwake" and self._app: self._app.toggle_awake()
         except Exception:
             import traceback
@@ -2713,7 +2468,7 @@ class AppDelegate(NSObject):
 
         cfg = WKWebViewConfiguration.alloc().init()
         uc  = cfg.userContentController()
-        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings", "refreshLimits", "toggleAwake"):
+        for n in ("refresh", "quit", "resize", "models", "saveSettings", "flex", "settings", "toggleAwake"):
             uc.addScriptMessageHandler_name_(self._msg, n)
 
 
@@ -2925,15 +2680,6 @@ class AppDelegate(NSObject):
                        awake_running=self._awake_thread is not None and self._awake_thread.is_alive())
         js = "typeof injectData!=='undefined'&&injectData(" + json.dumps(payload) + ")"
         self._wv.evaluateJavaScript_completionHandler_(js, None)
-
-    @objc.python_method
-    def refresh_limits(self):
-        _limits_cache["ts"] = 0.0
-        threading.Thread(target=_refresh_limits_bg, daemon=True).start()
-        def _reinject():
-            time.sleep(2)
-            self.inject_data()
-        threading.Thread(target=_reinject, daemon=True).start()
 
     @objc.python_method
     def save_settings_(self, body):
