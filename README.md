@@ -73,6 +73,7 @@ Set per-model or per-cost thresholds in **Settings → Alerts**. When exceeded, 
 | Claude Code | `~/.claude/projects/**/*.jsonl` | Scans JSONL logs, extracts all 4 token types per message |
 | Codex | `~/.codex/state_5.sqlite` | Reads `threads` table, estimates cost from blended rates |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Reads `session` table, uses cost column when available |
+| Pi | `~/.pi/agent/sessions/*/*.jsonl` | Scans session JSONL, uses pi's own per-message cost (no estimation) |
 
 All sources are filtered from `~/.tokenbar_start` (Unix timestamp).
 

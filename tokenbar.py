@@ -38,6 +38,7 @@ CC_DIR      = Path.home() / ".claude/projects"
 CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
 OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
 CURSOR_DB   = Path.home() / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+PI_DIR      = Path.home() / ".pi/agent/sessions"
 
 W, H   = 360, 320
 DEFAULT_REFRESH = 15.0
@@ -48,6 +49,7 @@ SETTINGS_FILE = Path.home() / ".tokenbar_settings.json"
 _SETTINGS = {}
 
 _cc_cache = {"ts": 0.0, "data": None}
+_pi_cache = {"ts": 0.0, "data": None}
 _cursor_cache = {"ts": 0.0, "data": None}
 _cursor_auth_cache = {"token": None, "sub": None}
 _ds_balance_cache = {"ts": 0.0, "data": None}
@@ -1200,6 +1202,115 @@ def fetch_claude_code(day_s, week_s, month_s, since_s=None):
     return result
 
 
+def fetch_pi(day_s, week_s, month_s, since_s=None):
+    global _pi_cache
+    now = time.time()
+    if since_s is None:
+        since_s = month_s
+    if now - _pi_cache["ts"] < 30 and _pi_cache["data"]:
+        return _pi_cache["data"]
+
+    if not PI_DIR.exists():
+        return {"today": 0, "week": 0, "total": 0, "daily": {}, "models": {},
+                "models_1d": {}, "models_7d": {}, "models_1m": {},
+                "model_costs": {}, "model_costs_1d": {}, "model_costs_7d": {}, "model_costs_1m": {},
+                "cost_today": 0.0, "cost_all": 0.0, "breakdown_today": {}, "daily_breakdown": {}}
+
+    models, models_1d, models_7d, models_1m = {}, {}, {}, {}
+    model_costs, model_costs_1d, model_costs_7d, model_costs_1m = {}, {}, {}, {}
+    total, today, week = 0, 0, 0
+    cost_all, cost_today = 0.0, 0.0
+    daily, daily_cost = {}, {}
+    daily_inp, daily_out, daily_r_d, daily_cr_d, daily_cw_d = {}, {}, {}, {}, {}
+    bd_i, bd_o, bd_r, bd_cr, bd_cw = 0, 0, 0, 0, 0
+
+    for jf in PI_DIR.glob("*/*.jsonl"):
+        try: mtime = jf.stat().st_mtime
+        except: continue
+        if mtime < since_s: continue
+
+        try:
+            with open(jf, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("type") != "message": continue
+                        msg = entry.get("message") or {}
+                        if msg.get("role") != "assistant": continue
+                        usage = msg.get("usage")
+                        if not usage: continue
+                        ts_iso = entry.get("timestamp")
+                        event_ts = mtime
+                        if ts_iso:
+                            try:
+                                event_ts = datetime.fromisoformat(
+                                    ts_iso.replace("Z", "+00:00")
+                                ).timestamp()
+                            except Exception:
+                                event_ts = mtime
+                        fdate    = _local_day_key(ts_iso, event_ts) if ts_iso else datetime.fromtimestamp(event_ts).strftime("%Y-%m-%d")
+                        is_today = event_ts >= day_s
+                        is_week  = event_ts >= week_s
+                        in_month = event_ts >= month_s
+                        in_all   = event_ts >= since_s
+                        i_tok  = usage.get("input", 0)
+                        o_tok  = usage.get("output", 0)
+                        c_read = usage.get("cacheRead", 0)
+                        c_writ = usage.get("cacheWrite", 0)
+                        r_tok  = usage.get("reasoning", 0)
+                        tok    = i_tok + o_tok + c_read + c_writ
+                        if not tok: continue
+                        m = msg.get("model") or "pi"
+                        if is_excluded(m): continue
+                        # pi calcule lui-même les coûts (pricing models.dev) :
+                        # on le croie sur parole — pas d'estimation de secours,
+                        # un coût à 0 est un modèle gratuit/inconnu
+                        cst = ((usage.get("cost") or {}).get("total") or 0.0)
+                        models[m]      = models.get(m, 0) + tok
+                        model_costs[m] = model_costs.get(m, 0.0) + cst
+                        total    += tok
+                        cost_all += cst
+                        if is_today:
+                            today += tok; cost_today += cst
+                            models_1d[m]      = models_1d.get(m, 0) + tok
+                            model_costs_1d[m] = model_costs_1d.get(m, 0.0) + cst
+                            bd_i += i_tok; bd_o += o_tok
+                            bd_r += r_tok; bd_cr += c_read; bd_cw += c_writ
+                        if is_week:
+                            week += tok
+                            models_7d[m]      = models_7d.get(m, 0) + tok
+                            model_costs_7d[m] = model_costs_7d.get(m, 0.0) + cst
+                        if in_month:
+                            models_1m[m]      = models_1m.get(m, 0) + tok
+                            model_costs_1m[m] = model_costs_1m.get(m, 0.0) + cst
+                        if in_all:
+                            daily[fdate]      = daily.get(fdate, 0) + tok
+                            daily_cost[fdate] = daily_cost.get(fdate, 0.0) + cst
+                            daily_inp[fdate]  = daily_inp.get(fdate, 0) + i_tok
+                            daily_out[fdate]  = daily_out.get(fdate, 0) + o_tok
+                            daily_r_d[fdate]  = daily_r_d.get(fdate, 0) + r_tok
+                            daily_cr_d[fdate] = daily_cr_d.get(fdate, 0) + c_read
+                            daily_cw_d[fdate] = daily_cw_d.get(fdate, 0) + c_writ
+                    except: pass
+        except: pass
+
+    result = {"today": today, "week": week, "total": total,
+              "daily": daily, "daily_cost": daily_cost, "models": models,
+              "models_1d": models_1d, "models_7d": models_7d, "models_1m": models_1m,
+              "model_costs": model_costs, "model_costs_1d": model_costs_1d,
+              "model_costs_7d": model_costs_7d, "model_costs_1m": model_costs_1m,
+              "cost_today": cost_today, "cost_all": cost_all,
+              "breakdown_today": {"input": bd_i, "output": bd_o,
+                                  "reasoning": bd_r,
+                                  "cache_read": bd_cr, "cache_write": bd_cw},
+              "daily_breakdown": {d: {"i": daily_inp.get(d,0), "o": daily_out.get(d,0),
+                                      "r": daily_r_d.get(d,0),
+                                      "cr": daily_cr_d.get(d,0), "cw": daily_cw_d.get(d,0)}
+                                  for d in daily}}
+    _pi_cache = {"ts": now, "data": result}
+    return result
+
+
 # ── Combined ──────────────────────────────────────────────────────────────────
 
 def _top(models: dict) -> str:
@@ -1221,6 +1332,7 @@ def fetch():
     cc = fetch_claude_code(day_s, week_s, month_s, since_s)
     cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
     cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
+    pi = fetch_pi(day_s, week_s, month_s, since_s)
 
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
@@ -1240,10 +1352,10 @@ def fetch():
 
     all_models      = {}
     all_models_today = {}
-    for src in (oc["models"], cc["models"], cx["models"], cu["models"]):
+    for src in (oc["models"], cc["models"], cx["models"], cu["models"], pi["models"]):
         for k, v in src.items():
             all_models[k] = all_models.get(k, 0) + v
-    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {}), cu.get("models_1d", {})):
+    for src in (oc.get("models_1d", {}), cc.get("models_1d", {}), cx.get("models_1d", {}), cu.get("models_1d", {}), pi.get("models_1d", {})):
         for k, v in src.items():
             all_models_today[k] = all_models_today.get(k, 0) + v
 
@@ -1260,10 +1372,11 @@ def fetch():
                     for k in ("i", "o", "r", "cr", "cw")}
                 for d in dates}
 
-    def merge_daily_by_source(cc_d, oc_d, cx_d, cu_d):
-        dates = set().union(cc_d.keys(), oc_d.keys(), cx_d.keys(), cu_d.keys())
+    def merge_daily_by_source(cc_d, oc_d, cx_d, cu_d, pi_d):
+        dates = set().union(cc_d.keys(), oc_d.keys(), cx_d.keys(), cu_d.keys(), pi_d.keys())
         return {d: {"claude_code": cc_d.get(d, 0), "opencode": oc_d.get(d, 0),
-                    "codex": cx_d.get(d, 0), "cursor": cu_d.get(d, 0)}
+                    "codex": cx_d.get(d, 0), "cursor": cu_d.get(d, 0),
+                    "pi": pi_d.get(d, 0)}
                 for d in dates}
 
     limits = fetch_claude_limits_cached()
@@ -1281,27 +1394,29 @@ def fetch():
         "codex_limits": codex_limits,
         "cursor_limits": cursor_limits,
         "all": {
-            "today_tok":  oc["today"] + cc["today"] + cx["today"] + cu["today"],
-            "week_tok":   oc["week"]  + cc["week"]  + cx["week"]  + cu["week"],
-            "all_tok":    oc["total"] + cc["total"] + cx["total"] + cu["total"],
+            "today_tok":  oc["today"] + cc["today"] + cx["today"] + cu["today"] + pi["today"],
+            "week_tok":   oc["week"]  + cc["week"]  + cx["week"]  + cu["week"]  + pi["week"],
+            "all_tok":    oc["total"] + cc["total"] + cx["total"] + cu["total"] + pi["total"],
             "today_sess": None,
             "all_sess":   None,
             "top_model":  _top(all_models),
             "top_model_today": _top(all_models_today),
-            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"], cu["daily"]),
-            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"], cu["daily_cost"]),
-            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"] + cu["cost_today"],
-            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"]   + cu["cost_all"],
+            "daily":      merged_daily(oc["daily"], cc["daily"], cx["daily"], cu["daily"], pi["daily"]),
+            "daily_cost": merged_daily_cost(oc["daily_cost"], cc["daily_cost"], cx["daily_cost"], cu["daily_cost"], pi["daily_cost"]),
+            "cost_today": oc["cost_today"] + cc["cost_today"] + cx["cost_today"] + cu["cost_today"] + pi["cost_today"],
+            "cost_all":   oc["cost_all"]   + cc["cost_all"]   + cx["cost_all"]   + cu["cost_all"]   + pi["cost_all"],
             "cost_exact": False,
             "breakdown_today": merge_bd_today(cc.get("breakdown_today", {}),
                                               oc.get("breakdown_today", {}),
                                               cx.get("breakdown_today", {}),
-                                              cu.get("breakdown_today", {})),
+                                              cu.get("breakdown_today", {}),
+                                              pi.get("breakdown_today", {})),
             "daily_breakdown": merge_daily_bd(cc.get("daily_breakdown", {}),
                                               oc.get("daily_breakdown", {}),
                                               cx.get("daily_breakdown", {}),
-                                              cu.get("daily_breakdown", {})),
-            "daily_by_source": merge_daily_by_source(cc["daily"], oc["daily"], cx["daily"], cu["daily"]),
+                                              cu.get("daily_breakdown", {}),
+                                              pi.get("daily_breakdown", {})),
+            "daily_by_source": merge_daily_by_source(cc["daily"], oc["daily"], cx["daily"], cu["daily"], pi["daily"]),
             "tok_per_hour": tok_per_hour,
             "ds_balance": ds_balance,
         },
@@ -1366,6 +1481,21 @@ def fetch():
             "breakdown_today": cx.get("breakdown_today", {}),
             "daily_breakdown": cx.get("daily_breakdown", {}),
         },
+        "pi": {
+            "today_tok":  pi["today"],
+            "week_tok":   pi["week"],
+            "all_tok":    pi["total"],
+            "today_sess": None,
+            "all_sess":   None,
+            "top_model":  _top(pi.get("models_1m") or pi["models"]),
+            "daily":      daily_list(pi["daily"]),
+            "daily_cost": daily_cost_list(pi["daily_cost"]),
+            "cost_today": pi["cost_today"],
+            "cost_all":   pi["cost_all"],
+            "cost_exact": True,
+            "breakdown_today": pi.get("breakdown_today", {}),
+            "daily_breakdown": pi.get("daily_breakdown", {}),
+        },
     }
 
 
@@ -1384,8 +1514,9 @@ def fetch_all_models():
     cc = fetch_claude_code(day_s, week_s, month_s, since_s)
     cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
     cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
+    pi = fetch_pi(day_s, week_s, month_s, since_s)
 
-    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc, cu_m, cu_mc):
+    def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc, cu_m, cu_mc, pi_m, pi_mc):
         rows = []
         for name, tok in oc_m.items():
             cost = oc_mc.get(name, estimate_cost(name, tok))
@@ -1399,13 +1530,16 @@ def fetch_all_models():
         for name, tok in cu_m.items():
             cost = cu_mc.get(name, 0.0)
             rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Cursor"})
+        for name, tok in pi_m.items():
+            cost = pi_mc.get(name, 0.0)
+            rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Pi"})
         return sorted(rows, key=lambda x: -x["tokens"])
 
     return {
-        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"], cu["models_1d"], cu["model_costs_1d"]),
-        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"], cu["models_7d"], cu["model_costs_7d"]),
-        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"], cu["models_1m"], cu["model_costs_1m"]),
-        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"],    cu["models"],    cu["model_costs"]),
+        "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"], cu["models_1d"], cu["model_costs_1d"], pi["models_1d"], pi["model_costs_1d"]),
+        "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"], cu["models_7d"], cu["model_costs_7d"], pi["models_7d"], pi["model_costs_7d"]),
+        "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"], cu["models_1m"], cu["model_costs_1m"], pi["models_1m"], pi["model_costs_1m"]),
+        "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"],    cu["models"],    cu["model_costs"],    pi["models"],    pi["model_costs"]),
     }
 
 
@@ -1509,6 +1643,7 @@ canvas{display:block;width:100%}
   <div class="tab"        data-tab="opencode"     onclick="switchTab('opencode')">OpenCode</div>
   <div class="tab"        data-tab="codex"        onclick="switchTab('codex')">Codex</div>
   <div class="tab"        data-tab="cursor"       onclick="switchTab('cursor')">Cursor</div>
+  <div class="tab"        data-tab="pi"            onclick="switchTab('pi')">Pi</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 
@@ -1632,9 +1767,10 @@ const PROVIDER_COLORS = {
   opencode:    {hex:'#8b5cf6', rgba:'rgba(139,92,246,'},
   codex:       {hex:'#10a37f', rgba:'rgba(16,163,127,'},
   cursor:      {hex:'#3b82f6', rgba:'rgba(59,130,246,'},
+  pi:          {hex:'#f59e0b', rgba:'rgba(245,158,11,'},
 };
-const PROVIDER_ORDER  = ['claude_code','opencode','codex','cursor'];
-const PROVIDER_LABELS = {claude_code:'Claude Code', opencode:'OpenCode', codex:'Codex', cursor:'Cursor'};
+const PROVIDER_ORDER  = ['claude_code','opencode','codex','cursor','pi'];
+const PROVIDER_LABELS = {claude_code:'Claude Code', opencode:'OpenCode', codex:'Codex', cursor:'Cursor', pi:'Pi'};
 
 function fmt(n){
   if(!n)return'0';
@@ -2753,7 +2889,7 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = s.get("top_model_today") or ""
-        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor")) if data.get(key, {}).get("today_tok", 0) > 0]
+        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor"), ("pi", "Pi")) if data.get(key, {}).get("today_tok", 0) > 0]
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
