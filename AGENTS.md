@@ -4,8 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Layout (v1 + v2)
 
-- `v1/` — original app, frozen. Multi-source (Claude Code, Codex, OpenCode DBs,
-  Cursor, Pi) by reading local files. Runs as `Tokenbar.app` (`◆` in menu bar).
+- `v1/` — original app, frozen + stopped (2026-09-26, login agent removed).
 - `v2/` — rethought app, single source: **your OpenCode proxy API**
   (`http://127.0.0.1:8787`, menu bar `⬢`). See `v2/README.md`.
 - `index.html` — landing page, hosted via GitHub Pages at https://azerdsq131.github.io/tokenbar/
