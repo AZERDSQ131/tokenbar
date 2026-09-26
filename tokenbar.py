@@ -2716,7 +2716,7 @@ class AppDelegate(NSObject):
                 data = None
             self._pending_data = data
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "_applyFetched_:", True, False)
+                "_applyFetched:", True, False)
         threading.Thread(target=work, daemon=True).start()
 
     def _applyFetched_(self, _):
@@ -2724,12 +2724,17 @@ class AppDelegate(NSObject):
         self._pending_data = None
         self._fetching = False
         if not data:
+            self._log("fetch: aucune donnée")
             return
+        first = self._last_data is None
         self._last_data = data
         try:
-            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+            title = _navbar_title(data['all']['today_tok'])
+            self._item.button().setTitle_(title)
         except Exception:
             pass
+        if first:
+            self._log("premières données appliquées")
         if self._pop.isShown():
             self._inject_js(data)
         if not hasattr(self, '_login_start_synced'):
@@ -2844,6 +2849,14 @@ class AppDelegate(NSObject):
 
     def userNotificationCenter_shouldPresentNotification_(self, center, notification):
         return True
+
+    @objc.python_method
+    def _log(self, msg):
+        try:
+            with open("/tmp/tokenbar.log", "a") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+        except Exception:
+            pass
 
     @objc.python_method
     def resize_popover(self, h):
@@ -3000,7 +3013,7 @@ All time: {fmt(total)} tokens""" + (f"""
                 if fresh is not None:
                     self._pending_models = fresh
                     self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                        "_applyModels_:", True, False)
+                        "_applyModels:", True, False)
             threading.Thread(target=work, daemon=True).start()
         models = _models_cache.get("data") or {"1d": [], "7d": [], "1m": [], "all": []}
         html   = MODELS_HTML_TMPL.replace("MODELS_PLACEHOLDER", json.dumps(models))
