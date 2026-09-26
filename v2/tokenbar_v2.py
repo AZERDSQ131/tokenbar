@@ -293,7 +293,8 @@ def fetch(use_cache=True):
     return data
 
 
-def fetch_sync():
+def fetch_proxy_tab():
+    """Source 1 : ton API (proxy). Renvoie l'onglet ou None si injoignable."""
     try:
         raw = _api_get("/v1/usage")
     except Exception as e:
@@ -362,9 +363,10 @@ def fetch_sync():
         "daily_breakdown": daily_bd,
         "tok_per_hour": tok_per_hour,
         "api_updated_at": raw.get("updated_at"),
+        "models_all": {n: m.get("tokens", 0) for n, m in m_all.items()},
+        "models_1d": {n: m.get("tokens", 0) for n, m in m_1d.items()},
     }
-    return {"all": s, "opencode": s,
-            "fetched_at": time.time(), "api_online": True}
+    return s
 
 
 def fetch_all_models(use_cache=True):
@@ -379,23 +381,239 @@ def fetch_all_models(use_cache=True):
     if not raw.get("ok"):
         return _models_cache["data"]
 
-    def make_rows(models):
+    def make_rows(models, source):
         rows = []
         for name, m in models.items():
             tok = m.get("tokens", 0)
             cost = _model_cost(name, m.get("input", 0) + m.get("cache_read", 0) + m.get("cache_write", 0), m.get("output", 0))
             rows.append({"name": name, "tokens": tok,
-                         "cost": round(cost, 4), "source": "OpenCode"})
+                         "cost": round(cost, 4), "source": source})
         return sorted(rows, key=lambda x: -x["tokens"])
 
-    data = {
-        "1d": make_rows(raw.get("models_1d", {})),
-        "7d": make_rows(raw.get("models_7d", {})),
-        "1m": make_rows(raw.get("models_1m", {})),
-        "all": make_rows(raw.get("models", {})),
-    }
+    def cli_rows():
+        try:
+            sessions = _cli_get("/session")
+        except Exception:
+            return {"1d": [], "7d": [], "1m": [], "all": []}
+        now_d = datetime.now().date()
+        cuts = {"1d": now_d.isoformat(),
+                "7d": (now_d - timedelta(days=6)).isoformat(),
+                "1m": (now_d - timedelta(days=29)).isoformat()}
+        groups = {"1d": {}, "7d": {}, "1m": {}, "all": {}}
+        for sn in sessions:
+            t = sn.get("tokens") or {}
+            ch = t.get("cache") or {}
+            tok = t.get("input", 0) + t.get("output", 0) + ch.get("read", 0) + ch.get("write", 0)
+            if not tok:
+                continue
+            name = ((sn.get("model") or {}).get("id")) or "unknown"
+            tm = (sn.get("time") or {}).get("updated", 0)
+            day = _cli_day(tm) if tm else now_d.isoformat()
+            cst = sn.get("cost") or 0.0
+            wins = ["all"]
+            if day >= cuts["1m"]:
+                wins.append("1m")
+            if day >= cuts["7d"]:
+                wins.append("7d")
+            if day == cuts["1d"]:
+                wins.append("1d")
+            for w in wins:
+                e = groups[w].setdefault(name, {"tokens": 0, "cost": 0.0})
+                e["tokens"] += tok
+                e["cost"] += cst
+        return {w: sorted([{"name": n, "tokens": e["tokens"],
+                            "cost": round(e["cost"], 4), "source": "CLI"}
+                           for n, e in g.items()], key=lambda x: -x["tokens"])
+                for w, g in groups.items()}
+
+    data = {}
+    cli = cli_rows()
+    for w in ("1d", "7d", "1m", "all"):
+        key = {"1d": "models_1d", "7d": "models_7d",
+               "1m": "models_1m", "all": "models"}[w]
+        rows = make_rows(raw.get(key, {}), "Proxy") + cli[w]
+        data[w] = sorted(rows, key=lambda x: -x["tokens"])
     _models_cache = {"ts": now, "data": data}
     return data
+
+
+CLI_BASE = "http://127.0.0.1:4096"
+CLI_TIMEOUT = 5.0
+
+
+def _cli_get(path):
+    req = urllib.request.Request(CLI_BASE + path, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=CLI_TIMEOUT) as r:
+        return json.loads(r.read())
+
+
+def _cli_day(ms):
+    try:
+        return datetime.fromtimestamp(ms / 1000.0).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def fetch_cli_tab():
+    """Source 2 : serveur OpenCode local (coûts exacts). Onglet ou None."""
+    try:
+        sessions = _cli_get("/session")
+    except Exception as e:
+        print(f"[tokenbar-v2] CLI injoignable: {e}", flush=True)
+        return None
+    now_dt = datetime.now()
+    today_str = now_dt.date().isoformat()
+    week_cut = (now_dt.date() - timedelta(days=6)).isoformat()
+    month_cut = (now_dt.date() - timedelta(days=29)).isoformat()
+    today_s = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    elapsed_h = max(0.5, (time.time() - today_s) / 3600)
+
+    per_day, mall, m1d = {}, {}, {}
+    cost_all = cost_today = 0.0
+    today_tok = week_tok = all_tok = 0
+    bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+    for sn in sessions:
+        t = sn.get("tokens") or {}
+        ch = t.get("cache") or {}
+        i, o = t.get("input", 0), t.get("output", 0)
+        cr, cw = ch.get("read", 0), ch.get("write", 0)
+        r = t.get("reasoning", 0)
+        tok = i + o + cr + cw
+        if not tok:
+            continue
+        cst = sn.get("cost") or 0.0
+        name = ((sn.get("model") or {}).get("id")) or "unknown"
+        tm = (sn.get("time") or {}).get("updated", 0)
+        day = _cli_day(tm) if tm else today_str
+        all_tok += tok
+        cost_all += cst
+        mall[name] = mall.get(name, 0) + tok
+        e = per_day.setdefault(day, {"tokens": 0, "cost": 0.0,
+                                     "bd": {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}})
+        e["tokens"] += tok
+        e["cost"] += cst
+        e["bd"]["i"] += i; e["bd"]["o"] += o; e["bd"]["r"] += r
+        e["bd"]["cr"] += cr; e["bd"]["cw"] += cw
+        if day == today_str:
+            today_tok += tok
+            cost_today += cst
+            m1d[name] = m1d.get(name, 0) + tok
+            bd_today["input"] += i; bd_today["output"] += o
+            bd_today["cache_read"] += cr; bd_today["cache_write"] += cw
+        if day >= week_cut:
+            week_tok += tok
+
+    pad_start = now_dt.date() - timedelta(days=365)
+    pad_days = (now_dt.date() - pad_start).days
+    daily, daily_cost, daily_bd = [], [], {}
+    for i in range(pad_days + 1):
+        key = (pad_start + timedelta(days=i)).isoformat()
+        e = per_day.get(key)
+        daily.append({"date": key, "tokens": e["tokens"] if e else 0})
+        daily_cost.append({"date": key, "cost": e["cost"] if e else 0.0})
+        daily_bd[key] = e["bd"] if e else {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}
+
+    return {
+        "today_tok": today_tok,
+        "week_tok": week_tok,
+        "all_tok": all_tok,
+        "today_req": 0,
+        "today_sess": None,
+        "all_sess": len(sessions),
+        "top_model": _top(mall),
+        "top_model_today": _top(m1d),
+        "daily": daily,
+        "daily_cost": daily_cost,
+        "cost_today": cost_today,
+        "cost_all": cost_all,
+        "cost_exact": True,
+        "breakdown_today": bd_today,
+        "daily_breakdown": daily_bd,
+        "tok_per_hour": int(today_tok / elapsed_h) if today_tok > 0 else 0,
+        "models_all": dict(mall),
+        "models_1d": dict(m1d),
+    }
+
+
+def empty_tab():
+    now_dt = datetime.now()
+    pad_start = now_dt.date() - timedelta(days=365)
+    pad_days = (now_dt.date() - pad_start).days
+    daily = [{"date": (pad_start + timedelta(days=i)).isoformat(), "tokens": 0}
+             for i in range(pad_days + 1)]
+    daily_cost = [{"date": d["date"], "cost": 0.0} for d in daily]
+    return {
+        "today_tok": 0, "week_tok": 0, "all_tok": 0, "today_req": 0,
+        "today_sess": None, "all_sess": None,
+        "top_model": "—", "top_model_today": "—",
+        "daily": daily, "daily_cost": daily_cost,
+        "cost_today": 0.0, "cost_all": 0.0, "cost_exact": True,
+        "breakdown_today": {},
+        "daily_breakdown": {d["date"]: {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0} for d in daily},
+        "tok_per_hour": 0, "models_all": {}, "models_1d": {},
+    }
+
+
+def merge_tabs(p, c):
+    daily = [{"date": a["date"], "tokens": a["tokens"] + b["tokens"]}
+             for a, b in zip(p["daily"], c["daily"])]
+    daily_cost = [{"date": a["date"], "cost": a["cost"] + b["cost"]}
+                  for a, b in zip(p["daily_cost"], c["daily_cost"])]
+    keys = ("i", "o", "r", "cr", "cw")
+    daily_bd = {d["date"]: {k: p["daily_breakdown"].get(d["date"], {}).get(k, 0)
+                               + c["daily_breakdown"].get(d["date"], {}).get(k, 0)
+                               for k in keys} for d in daily}
+    by_source = {d["date"]: {"proxy": a["tokens"], "cli": b["tokens"]}
+                 for d, a, b in [(e, x, y) for e, x, y in
+                                  zip(daily, p["daily"], c["daily"])]}
+    mall, m1d = {}, {}
+    for src in (p.get("models_all", {}), c.get("models_all", {})):
+        for k, v in src.items():
+            mall[k] = mall.get(k, 0) + v
+    for src in (p.get("models_1d", {}), c.get("models_1d", {})):
+        for k, v in src.items():
+            m1d[k] = m1d.get(k, 0) + v
+    today_tok = p["today_tok"] + c["today_tok"]
+    elapsed_h = max(0.5, (time.time() - datetime.now().replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp()) / 3600)
+    bd = {"input": p["breakdown_today"].get("input", 0) + c["breakdown_today"].get("input", 0),
+          "output": p["breakdown_today"].get("output", 0) + c["breakdown_today"].get("output", 0),
+          "cache_read": p["breakdown_today"].get("cache_read", 0) + c["breakdown_today"].get("cache_read", 0),
+          "cache_write": p["breakdown_today"].get("cache_write", 0) + c["breakdown_today"].get("cache_write", 0)}
+    return {
+        "today_tok": today_tok,
+        "week_tok": p["week_tok"] + c["week_tok"],
+        "all_tok": p["all_tok"] + c["all_tok"],
+        "today_req": p.get("today_req", 0),
+        "today_sess": None,
+        "all_sess": c.get("all_sess"),
+        "top_model": _top(mall),
+        "top_model_today": _top(m1d),
+        "daily": daily,
+        "daily_cost": daily_cost,
+        "cost_today": p["cost_today"] + c["cost_today"],
+        "cost_all": p["cost_all"] + c["cost_all"],
+        "cost_exact": False,
+        "breakdown_today": bd,
+        "daily_breakdown": daily_bd,
+        "daily_by_source": by_source,
+        "tok_per_hour": int(today_tok / elapsed_h) if today_tok > 0 else 0,
+    }
+
+
+def fetch_sync():
+    p = fetch_proxy_tab()
+    c = fetch_cli_tab()
+    if p is None and c is None:
+        print("[tokenbar-v2] proxy + CLI injoignables", flush=True)
+        return None
+    return {"all": merge_tabs(p or empty_tab(), c or empty_tab()),
+            "proxy": p or empty_tab(),
+            "cli": c or empty_tab(),
+            "fetched_at": time.time(),
+            "proxy_online": p is not None,
+            "cli_online": c is not None}
 
 
 _models_cache = {"ts": 0.0, "data": None}
@@ -495,9 +713,12 @@ canvas{display:block;width:100%}
 
 <div id="page-main">
 <div class="tabs">
-  <div class="tab active" data-tab="all" onclick="switchTab('all')">\u2b22 OpenCode API</div>
+  <div class="tab active" data-tab="all"   onclick="switchTab('all')">All</div>
+  <div class="tab"        data-tab="proxy" onclick="switchTab('proxy')">⬢ Proxy</div>
+  <div class="tab"        data-tab="cli"   onclick="switchTab('cli')">CLI</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
+<div id="sync-line" style="padding:0 20px 6px;font-size:9.5px;color:rgba(255,255,255,.28);letter-spacing:.02em"></div>
 
 <div class="stats">
   <div><div class="lbl">Today</div><div class="val" id="v-today">—</div></div>
@@ -614,14 +835,11 @@ const BD_ORDER = ['cr','i','r','cw','o'];
 
 // Une couleur fixe par fournisseur, réutilisée partout (résumé, graphique "All", quotas)
 const PROVIDER_COLORS = {
-  claude_code: {hex:'#d97757', rgba:'rgba(217,119,87,'},
-  opencode:    {hex:'#8b5cf6', rgba:'rgba(139,92,246,'},
-  codex:       {hex:'#10a37f', rgba:'rgba(16,163,127,'},
-  cursor:      {hex:'#3b82f6', rgba:'rgba(59,130,246,'},
-  pi:          {hex:'#f59e0b', rgba:'rgba(245,158,11,'},
+  proxy: {hex:'#8b5cf6', rgba:'rgba(139,92,246,'},
+  cli:   {hex:'#34d399', rgba:'rgba(52,211,153,'},
 };
-const PROVIDER_ORDER  = ['claude_code','opencode','codex','cursor','pi'];
-const PROVIDER_LABELS = {claude_code:'Claude Code', opencode:'OpenCode', codex:'Codex', cursor:'Cursor', pi:'Pi'};
+const PROVIDER_ORDER  = ['proxy','cli'];
+const PROVIDER_LABELS = {proxy:'Proxy API', cli:'CLI local'};
 
 function fmt(n){
   if(!n)return'0';
@@ -977,6 +1195,16 @@ function renderQuota(d, settings) {
 function injectData(d) {
   __data = d;
   if(d.settings){__settings=d.settings;applySettings(d.settings)}
+  var sl=document.getElementById('sync-line');
+  if(sl){
+    var f=d.fetched_at?new Date(d.fetched_at*1000):null;
+    var txt=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
+    var off=[];
+    if(d.proxy_online===false)off.push('proxy hors ligne');
+    if(d.cli_online===false)off.push('CLI hors ligne');
+    sl.textContent=txt+(off.length?' \u00b7 '+off.join(' \u00b7 '):'');
+    sl.style.color=off.length?'#f87171':'rgba(255,255,255,.28)';
+  }
   renderTab(__tab);
   renderQuota(d, __settings);
   requestAnimationFrame(function(){
@@ -1678,7 +1906,7 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = s.get("top_model_today") or ""
-        sources = [label for key, label in (("opencode", "OpenCode"), ("claude_code", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor"), ("pi", "Pi")) if data.get(key, {}).get("today_tok", 0) > 0]
+        sources = [label for key, label in (("proxy", "Proxy API"), ("cli", "CLI local")) if data.get(key, {}).get("today_tok", 0) > 0]
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
