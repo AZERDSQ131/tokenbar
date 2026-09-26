@@ -266,3 +266,14 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
   tourner le process (titre set, `isVisible=True`) **sans afficher l'icône**
   (prouvé par screenshots A/B). Login agent `com.tokenbarv2` = même mode
   direct, donc OK pour la persistance.
+
+### Fond (launchd)
+
+- `com.jules.tokenbar` (~/Library/LaunchAgents) lançait la v1 via
+  `open Tokenbar.app` → **repointé v2 en direct**
+  (`/opt/homebrew/bin/python3.12 .../v2/tokenbar_v2.py`, `KeepAlive=true`,
+  logs `/tmp/tokenbar_v2.log`). Le passage par `open TokenbarV2.app`
+  n'affiche pas l'icône (prouvé A/B) — ne pas y revenir.
+- Ancien `com.tokenbar.plist` (agent login v1) supprimé 2026-09-26.
+- `com.opencode.proxy` (port 8787, plist réparé) et `com.opencode.server`
+  (port 4096, `WorkingDirectory=/`) : infra conservée (flux OpenClaw + CLI).
