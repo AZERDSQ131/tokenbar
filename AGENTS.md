@@ -227,3 +227,16 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
 - Autres endpoints utiles repérés (non branchés) : `/session/status`,
   `/event` (SSE live `message.updated` — piste pour du push temps réel),
   `/config/providers` (modèles par défaut, pas de prix).
+
+### App side — source 3 : pi local (`Pi`, ton harness, coûts exacts)
+
+- Sessions : `~/.pi/agent/sessions/*/*.jsonl` (167 fichiers, ~86 Mo). Chaque
+  message assistant porte `model`, `provider`, `usage{input,output,
+  cacheRead,cacheWrite,reasoning,totalTokens,cost{input,output,cacheRead,
+  cacheWrite,total}}` (coûts exacts pi, jamais estimés) + `timestamp` ISO.
+- Providers croisés : `opencode-go`, `mistral`, `groq`, `openrouter`,
+  `deepseek`, `nim`, `opencode`, `nvidia` — directs, **pas via le proxy
+  :8787** → aucun double comptage avec l'onglet Proxy.
+- `_pi_all_messages()` : cache incrémental par fichier (mtime+taille, lignes
+  re-parsées uniquement si changées). Froid ~0,5 s, tiède ~0 s.
+- C'est la plus grosse source (950 M tokens, $7,27 — tout le reste est free).
