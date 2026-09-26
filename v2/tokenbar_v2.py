@@ -426,10 +426,34 @@ def fetch_all_models(use_cache=True):
 
     data = {}
     cli = cli_rows()
+    pi_groups = {"1d": {}, "7d": {}, "1m": {}, "all": {}}
+    now_d = datetime.now().date()
+    pi_cuts = {"1d": now_d.isoformat(),
+               "7d": (now_d - timedelta(days=6)).isoformat(),
+               "1m": (now_d - timedelta(days=29)).isoformat()}
+    for (day, name, i, o, r, cr, cw, cst) in _pi_all_messages():
+        tok = i + o + cr + cw
+        if not tok:
+            continue
+        wins = ["all"]
+        if day >= pi_cuts["1m"]:
+            wins.append("1m")
+        if day >= pi_cuts["7d"]:
+            wins.append("7d")
+        if day == pi_cuts["1d"]:
+            wins.append("1d")
+        for w in wins:
+            e = pi_groups[w].setdefault(name, {"tokens": 0, "cost": 0.0})
+            e["tokens"] += tok
+            e["cost"] += cst
+    pi = {w: sorted([{"name": n, "tokens": e["tokens"],
+                      "cost": round(e["cost"], 4), "source": "Pi"}
+                     for n, e in g.items()], key=lambda x: -x["tokens"])
+          for w, g in pi_groups.items()}
     for w in ("1d", "7d", "1m", "all"):
         key = {"1d": "models_1d", "7d": "models_7d",
                "1m": "models_1m", "all": "models"}[w]
-        rows = make_rows(raw.get(key, {}), "Proxy") + cli[w]
+        rows = make_rows(raw.get(key, {}), "Proxy") + cli[w] + pi[w]
         data[w] = sorted(rows, key=lambda x: -x["tokens"])
     _models_cache = {"ts": now, "data": data}
     return data
@@ -574,6 +598,148 @@ def fetch_cli_tab():
     }
 
 
+_pi_cache = {"files": {}, "rows": []}
+
+
+def _pi_all_messages():
+    """Précision niveau message, cache incrémental par fichier (mtime+taille).
+    Coûts exacts calculés par pi lui-même (jamais estimés)."""
+    if not PI_DIR.exists():
+        return []
+    try:
+        files = sorted(PI_DIR.glob("*/*.jsonl"))
+    except Exception as e:
+        print(f"[tokenbar-v2] pi scan: {e}", flush=True)
+        return list(_pi_cache["rows"])
+    live = set()
+    changed = False
+    for jf in files:
+        p = str(jf)
+        live.add(p)
+        try:
+            st = jf.stat()
+            sig = (st.st_mtime, st.st_size)
+        except Exception:
+            continue
+        if _pi_cache["files"].get(p) == sig:
+            continue
+        changed = True
+        _pi_cache["files"][p] = sig
+        rows = []
+        try:
+            with open(jf, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if entry.get("type") != "message":
+                        continue
+                    msg = entry.get("message") or {}
+                    if msg.get("role") != "assistant":
+                        continue
+                    usage = msg.get("usage")
+                    if not usage:
+                        continue
+                    ts = entry.get("timestamp") or msg.get("timestamp")
+                    try:
+                        day = datetime.fromisoformat(
+                            ts.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+                    except Exception:
+                        day = datetime.now().strftime("%Y-%m-%d")
+                    cst = ((usage.get("cost") or {}).get("total")) or 0.0
+                    rows.append((day, msg.get("model") or "pi",
+                                 usage.get("input", 0), usage.get("output", 0),
+                                 usage.get("reasoning", 0),
+                                 usage.get("cacheRead", 0), usage.get("cacheWrite", 0),
+                                 cst))
+        except Exception:
+            continue
+        _pi_cache["files"][p + "#rows"] = rows
+    for p in list(_pi_cache["files"]):
+        if p.endswith("#rows"):
+            continue
+        if p not in live:
+            _pi_cache["files"].pop(p, None)
+            _pi_cache["files"].pop(p + "#rows", None)
+            changed = True
+    if changed:
+        out = []
+        for p, v in _pi_cache["files"].items():
+            if p.endswith("#rows"):
+                out.extend(v)
+        _pi_cache["rows"] = out
+    return list(_pi_cache["rows"])
+
+
+def fetch_pi_tab():
+    """Source 3 : pi local (ton harness, coûts exacts)."""
+    rows = _pi_all_messages()
+    now_dt = datetime.now()
+    today_str = now_dt.date().isoformat()
+    week_cut = (now_dt.date() - timedelta(days=6)).isoformat()
+    today_s = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    elapsed_h = max(0.5, (time.time() - today_s) / 3600)
+
+    per_day, mall, m1d = {}, {}, {}
+    cost_all = cost_today = 0.0
+    today_tok = week_tok = all_tok = 0
+    bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+    for (day, name, i, o, r, cr, cw, cst) in rows:
+        tok = i + o + cr + cw
+        if not tok:
+            continue
+        all_tok += tok
+        cost_all += cst
+        mall[name] = mall.get(name, 0) + tok
+        e = per_day.setdefault(day, {"tokens": 0, "cost": 0.0,
+                                     "bd": {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}})
+        e["tokens"] += tok
+        e["cost"] += cst
+        e["bd"]["i"] += i; e["bd"]["o"] += o; e["bd"]["r"] += r
+        e["bd"]["cr"] += cr; e["bd"]["cw"] += cw
+        if day == today_str:
+            today_tok += tok
+            cost_today += cst
+            m1d[name] = m1d.get(name, 0) + tok
+            bd_today["input"] += i; bd_today["output"] += o
+            bd_today["cache_read"] += cr; bd_today["cache_write"] += cw
+        if day >= week_cut:
+            week_tok += tok
+
+    pad_start = now_dt.date() - timedelta(days=365)
+    pad_days = (now_dt.date() - pad_start).days
+    daily, daily_cost, daily_bd = [], [], {}
+    for i in range(pad_days + 1):
+        key = (pad_start + timedelta(days=i)).isoformat()
+        e = per_day.get(key)
+        daily.append({"date": key, "tokens": e["tokens"] if e else 0})
+        daily_cost.append({"date": key, "cost": e["cost"] if e else 0.0})
+        daily_bd[key] = e["bd"] if e else {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}
+
+    return {
+        "today_tok": today_tok,
+        "week_tok": week_tok,
+        "all_tok": all_tok,
+        "today_req": 0,
+        "today_sess": None,
+        "all_sess": None,
+        "top_model": _top(mall),
+        "top_model_today": _top(m1d),
+        "daily": daily,
+        "daily_cost": daily_cost,
+        "cost_today": cost_today,
+        "cost_all": cost_all,
+        "cost_exact": True,
+        "breakdown_today": bd_today,
+        "daily_breakdown": daily_bd,
+        "tok_per_hour": int(today_tok / elapsed_h) if today_tok > 0 else 0,
+        "models_all": dict(mall),
+        "models_1d": dict(m1d),
+    }
+
+
 def empty_tab():
     now_dt = datetime.now()
     pad_start = now_dt.date() - timedelta(days=365)
@@ -593,32 +759,35 @@ def empty_tab():
     }
 
 
-def merge_tabs(p, c):
-    daily = [{"date": a["date"], "tokens": a["tokens"] + b["tokens"]}
-             for a, b in zip(p["daily"], c["daily"])]
-    daily_cost = [{"date": a["date"], "cost": a["cost"] + b["cost"]}
-                  for a, b in zip(p["daily_cost"], c["daily_cost"])]
+def merge_tabs(p, c, pi):
+    daily = [{"date": a["date"], "tokens": a["tokens"] + b["tokens"] + e["tokens"]}
+             for a, b, e in zip(p["daily"], c["daily"], pi["daily"])]
+    daily_cost = [{"date": a["date"], "cost": a["cost"] + b["cost"] + e["cost"]}
+                  for a, b, e in zip(p["daily_cost"], c["daily_cost"], pi["daily_cost"])]
     keys = ("i", "o", "r", "cr", "cw")
-    daily_bd = {d["date"]: {k: p["daily_breakdown"].get(d["date"], {}).get(k, 0)
-                               + c["daily_breakdown"].get(d["date"], {}).get(k, 0)
+    def _bd(src, date):
+        return src["daily_breakdown"].get(date, {})
+    daily_bd = {d["date"]: {k: _bd(p, d["date"]).get(k, 0)
+                               + _bd(c, d["date"]).get(k, 0)
+                               + _bd(pi, d["date"]).get(k, 0)
                                for k in keys} for d in daily}
-    by_source = {d["date"]: {"proxy": a["tokens"], "cli": b["tokens"]}
-                 for d, a, b in [(e, x, y) for e, x, y in
-                                  zip(daily, p["daily"], c["daily"])]}
+    by_source = {d["date"]: {"proxy": a["tokens"], "cli": b["tokens"], "pi": e["tokens"]}
+                 for d, a, b, e in [(x, y, z, w) for x, y, z, w in
+                                     zip(daily, p["daily"], c["daily"], pi["daily"])]}
     mall, m1d = {}, {}
-    for src in (p.get("models_all", {}), c.get("models_all", {})):
+    for src in (p.get("models_all", {}), c.get("models_all", {}), pi.get("models_all", {})):
         for k, v in src.items():
             mall[k] = mall.get(k, 0) + v
-    for src in (p.get("models_1d", {}), c.get("models_1d", {})):
+    for src in (p.get("models_1d", {}), c.get("models_1d", {}), pi.get("models_1d", {})):
         for k, v in src.items():
             m1d[k] = m1d.get(k, 0) + v
     today_tok = p["today_tok"] + c["today_tok"]
     elapsed_h = max(0.5, (time.time() - datetime.now().replace(
         hour=0, minute=0, second=0, microsecond=0).timestamp()) / 3600)
-    bd = {"input": p["breakdown_today"].get("input", 0) + c["breakdown_today"].get("input", 0),
-          "output": p["breakdown_today"].get("output", 0) + c["breakdown_today"].get("output", 0),
-          "cache_read": p["breakdown_today"].get("cache_read", 0) + c["breakdown_today"].get("cache_read", 0),
-          "cache_write": p["breakdown_today"].get("cache_write", 0) + c["breakdown_today"].get("cache_write", 0)}
+    bd = {"input": p["breakdown_today"].get("input", 0) + c["breakdown_today"].get("input", 0) + pi["breakdown_today"].get("input", 0),
+          "output": p["breakdown_today"].get("output", 0) + c["breakdown_today"].get("output", 0) + pi["breakdown_today"].get("output", 0),
+          "cache_read": p["breakdown_today"].get("cache_read", 0) + c["breakdown_today"].get("cache_read", 0) + pi["breakdown_today"].get("cache_read", 0),
+          "cache_write": p["breakdown_today"].get("cache_write", 0) + c["breakdown_today"].get("cache_write", 0) + pi["breakdown_today"].get("cache_write", 0)}
     return {
         "today_tok": today_tok,
         "week_tok": p["week_tok"] + c["week_tok"],
@@ -630,8 +799,8 @@ def merge_tabs(p, c):
         "top_model_today": _top(m1d),
         "daily": daily,
         "daily_cost": daily_cost,
-        "cost_today": p["cost_today"] + c["cost_today"],
-        "cost_all": p["cost_all"] + c["cost_all"],
+        "cost_today": p["cost_today"] + c["cost_today"] + pi["cost_today"],
+        "cost_all": p["cost_all"] + c["cost_all"] + pi["cost_all"],
         "cost_exact": False,
         "breakdown_today": bd,
         "daily_breakdown": daily_bd,
@@ -643,12 +812,14 @@ def merge_tabs(p, c):
 def fetch_sync():
     p = fetch_proxy_tab()
     c = fetch_cli_tab()
+    t = fetch_pi_tab()
     if p is None and c is None:
         print("[tokenbar-v2] proxy + CLI injoignables", flush=True)
         return None
-    return {"all": merge_tabs(p or empty_tab(), c or empty_tab()),
+    return {"all": merge_tabs(p or empty_tab(), c or empty_tab(), t),
             "proxy": p or empty_tab(),
             "cli": c or empty_tab(),
+            "pi": t,
             "fetched_at": time.time(),
             "proxy_online": p is not None,
             "cli_online": c is not None}
@@ -754,6 +925,7 @@ canvas{display:block;width:100%}
   <div class="tab active" data-tab="all"   onclick="switchTab('all')">All</div>
   <div class="tab"        data-tab="proxy" onclick="switchTab('proxy')">⬢ Proxy</div>
   <div class="tab"        data-tab="cli"   onclick="switchTab('cli')">CLI</div>
+  <div class="tab"        data-tab="pi"    onclick="switchTab('pi')">Pi</div>
   <button class="tab-settings" onclick="act('settings')" title="Settings">&#x2699;</button>
 </div>
 <div id="sync-line" style="padding:0 20px 6px;font-size:9.5px;color:rgba(255,255,255,.28);letter-spacing:.02em"></div>
@@ -875,9 +1047,10 @@ const BD_ORDER = ['cr','i','r','cw','o'];
 const PROVIDER_COLORS = {
   proxy: {hex:'#8b5cf6', rgba:'rgba(139,92,246,'},
   cli:   {hex:'#34d399', rgba:'rgba(52,211,153,'},
+  pi:    {hex:'#f59e0b', rgba:'rgba(245,158,11,'},
 };
-const PROVIDER_ORDER  = ['proxy','cli'];
-const PROVIDER_LABELS = {proxy:'Proxy API', cli:'CLI local'};
+const PROVIDER_ORDER  = ['proxy','cli','pi'];
+const PROVIDER_LABELS = {proxy:'Proxy API', cli:'CLI local', pi:'Pi'};
 
 function fmt(n){
   if(!n)return'0';
@@ -1944,7 +2117,7 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = s.get("top_model_today") or ""
-        sources = [label for key, label in (("proxy", "Proxy API"), ("cli", "CLI local")) if data.get(key, {}).get("today_tok", 0) > 0]
+        sources = [label for key, label in (("proxy", "Proxy API"), ("cli", "CLI local"), ("pi", "Pi")) if data.get(key, {}).get("today_tok", 0) > 0]
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
