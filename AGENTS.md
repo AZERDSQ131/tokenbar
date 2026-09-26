@@ -2,34 +2,54 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-## Main files
+## Layout (v1 + v2)
 
-- `tokenbar.py` — main application (macOS menu bar, ~1600 lines)
-- `keep_awake.sh` — standalone utility (prevents sleep via mouse movements)
-- `start_tokenbar.sh` — launches tokenbar in background via `nohup`, logs to `/tmp/tokenbar.log`
+- `v1/` — original app, frozen. Multi-source (Claude Code, Codex, OpenCode DBs,
+  Cursor, Pi) by reading local files. Runs as `Tokenbar.app` (`◆` in menu bar).
+- `v2/` — rethought app, single source: **your OpenCode proxy API**
+  (`http://127.0.0.1:8787`, menu bar `⬢`). See `v2/README.md`.
 - `index.html` — landing page, hosted via GitHub Pages at https://azerdsq131.github.io/tokenbar/
+
+## Main files (v1)
+
+- `v1/tokenbar.py` — main application (macOS menu bar, ~1600 lines)
+- `v1/keep_awake.sh` — standalone utility (prevents sleep via mouse movements)
+- `v1/start_tokenbar.sh` — launches Tokenbar.app via LaunchServices
+
+## Main files (v2)
+
+- `v2/tokenbar_v2.py` — menu bar app, single source `GET /v1/usage` on the proxy
+- `v2/start_tokenbar_v2.sh` — launches TokenbarV2.app via LaunchServices
+- `v2/README.md` — v2 architecture & run instructions
+- Proxy side (other repo): `~/projects/api-opencode/proxy/server.js`
+  (usage tap + `GET /v1/usage`), data in `~/.local/share/tokenbar-v2/`
+  (`usage.jsonl` = source of truth, `usage_state.json` = cache).
 
 ## Commands
 
 ```bash
-# Run in foreground
-python3 tokenbar.py
+# v1 — foreground / background / restart
+python3 v1/tokenbar.py
+./v1/start_tokenbar.sh
+pkill -f "tokenbar.py" && python3 v1/tokenbar.py
 
-# Run in background
-./start_tokenbar.sh
-
-# Full restart
-pkill -f tokenbar.py && python3 tokenbar.py
+# v2 — foreground / background
+/opt/homebrew/bin/python3.12 v2/tokenbar_v2.py
+./v2/start_tokenbar_v2.sh
 
 # Python dependencies (PyObjC + WebKit bindings)
 pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit
 
-# Sentinel file — auto-created on first launch, filters prior tokens
+# v1 sentinel file — auto-created on first launch, filters prior tokens
 # To reset manually:
 echo "$(date +%s)" > ~/.tokenbar_start
+
+# Proxy usage API
+curl -s http://127.0.0.1:8787/health
+curl -s http://127.0.0.1:8787/v1/usage
 ```
 
-## Architecture
+## Architecture (v1)
 
 `tokenbar.py` is a native macOS menu bar app built with **PyObjC** (not `rumps`). It uses `NSStatusBar` + `NSPopover` + `WKWebView` to display an HTML/CSS/Canvas interface in a popover.
 
@@ -137,3 +157,40 @@ The **Flex** button in the popover footer calls `act('flex')` → `AppDelegate.f
 ### Daily notification
 
 When enabled in settings, a macOS `NSUserNotification` is delivered at the configured time (default 20:00, 24h format). Checked every 15s in `tick_()` via `AppDelegate.check_daily_notification()`. Only fires once per day (`_notified_date` guard). Notification has a **Flex on X** action button that calls `AppDelegate.flex()`.
+
+## Architecture (v2)
+
+Single source: your OpenCode proxy API. v2 never reads OpenCode files.
+
+### Proxy side (`~/projects/api-opencode/proxy/server.js`, other repo)
+
+- Every upstream response is tapped write-through (streaming preserved):
+  chunks forwarded immediately + buffered (cap 10 MB) for usage extraction.
+- `extractModel(body)` — `"model"` from request JSON, last path segment.
+- `extractUsage(text)` — last occurrence wins: `prompt/completion_tokens`
+  (chat) or `input/output_tokens` (responses) + `cached_tokens` /
+  `cache_read|creation_input_tokens` + `reasoning_tokens`.
+- `recordUsage()` → append `~/.local/share/tokenbar-v2/usage.jsonl` (source of
+  truth, replayed at boot via `loadUsageState()`) + `saveUsageState()`.
+- `GET /v1/usage` (never forwarded) → `buildUsage()`: `today_tok`,
+  `week_tok`, `all_tok`, `daily[]` (tokens/input/output/cache + per-model
+  breakdown), `models` / `models_1d` / `models_7d` / `models_1m`.
+- Errors (non-2xx, status 0 on upstream failure) are logged too (tokens 0).
+- LaunchAgent `com.opencode.proxy` (fixed 2026-09-26: pointed to the deleted
+  `API OpenCode/…` path while the process ran from memory — now points to
+  `~/projects/api-opencode/proxy/server.js`, logs to `api-opencode/logs/`).
+
+### App side (`v2/tokenbar_v2.py`, ~1800 lines, menu bar `⬢`)
+
+- `fetch_sync()` → `GET /v1/usage` (5 s timeout) → costs computed locally via
+  `_model_cost()` (substring match on `BLENDED_RATES` + custom rates, `free`
+  in name → 0, fallback $5/M). Returns `None` when API unreachable (offline
+  state — stale data never shown as fresh).
+- Calendar continuity: 366 days padded with explicit zeros (same honesty rule
+  as v1: charts always end on today).
+- Same proven shell as v1 (popover + canvas charts + models window + Flex +
+  settings + alerts + daily notification), trimmed: single `⬢ OpenCode API`
+  tab, no awake mode, no excluded-models/DeepSeek-key/start-reset settings.
+- Own identity: `~/.tokenbar_v2_settings.json`, `/tmp/tokenbar_v2.log`,
+  login agent `com.tokenbarv2`, bundle `TokenbarV2.app` (runs the repo file
+  directly — no copy step unlike v1).
