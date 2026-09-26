@@ -1166,6 +1166,7 @@ class AppDelegate(NSObject):
         try:
             title = _navbar_title(data['today_tok'])
             self._item.button().setTitle_(title)
+            self._log("menu: " + title)
         except Exception:
             pass
         if first:
