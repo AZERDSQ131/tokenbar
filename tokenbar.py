@@ -1361,14 +1361,19 @@ def fetch_sync():
     oc, cc, cx, cu, pi = (f_oc.result(), f_cc.result(), f_cx.result(),
                            f_cu.result(), f_pi.result())
 
-    # Jours sans consommation : aujourd'hui à zéro dans les séries pour que
-    # les graphiques se terminent sur le vrai jour courant (pas le dernier actif).
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    # Séries calendaires continues : chaque jour sans activité vaut 0 explicite,
+    # pour que les graphiques respectent le vrai temps écoulé (pas de compression
+    # des jours vides, le dernier jour affiché est toujours aujourd'hui).
+    _pad_start = max(datetime.fromtimestamp(since_s).date(),
+                     now_dt.date() - timedelta(days=365))
+    _pad_days = (now_dt.date() - _pad_start).days
     _ZERO_BD = {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}
-    for src in (oc, cc, cx, cu, pi):
-        src["daily"].setdefault(today_str, 0)
-        src["daily_cost"].setdefault(today_str, 0.0)
-        src["daily_breakdown"].setdefault(today_str, dict(_ZERO_BD))
+    for _i in range(_pad_days + 1):
+        _key = (_pad_start + timedelta(days=_i)).isoformat()
+        for src in (oc, cc, cx, cu, pi):
+            src["daily"].setdefault(_key, 0)
+            src["daily_cost"].setdefault(_key, 0.0)
+            src["daily_breakdown"].setdefault(_key, dict(_ZERO_BD))
 
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
