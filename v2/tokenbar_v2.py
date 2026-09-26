@@ -1165,8 +1165,14 @@ class AppDelegate(NSObject):
         self._last_data = data
         try:
             title = _navbar_title(data['today_tok'])
-            self._item.button().setTitle_(title)
-            self._log("menu: " + title)
+            btn = self._item.button()
+            btn.setTitle_(title)
+            try:
+                rb = btn.title()
+                vis = self._item.isVisible() if hasattr(self._item, 'isVisible') else '?'
+            except Exception as e2:
+                rb, vis = 'ERR', repr(e2)[:80]
+            self._log(f"menu: {title} | readback={rb} | visible={vis}")
         except Exception:
             pass
         if first:
