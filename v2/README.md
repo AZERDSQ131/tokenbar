@@ -11,8 +11,6 @@ lui-même le coût exact de chaque message.
 
 - **Header** `π Pi` + nombre de sessions (total · aujourd'hui), heure de MAJ
 - **Stats** : Today (avec temps écoulé) · 7 days · All time · Cost today (exact)
-- **Providers** : répartition par fournisseur (opencode-go, mistral, groq,
-  openrouter, deepseek, nim…) — tokens + coût exact chacun, rappel du jour
 - **Graphiques** : tokens 30 j + coûts, périodes 1d/7d/1m/All, styles
   bars/line/area, tooltips
 - **Top models** : top 8 inline avec barres + fenêtre « All models »
@@ -32,12 +30,12 @@ tiède ~0 s. Fetch en tâche de fond toutes les 15 s, jamais sur le thread UI.
 ## Lancement
 
 ```bash
-./start_tokenbar_v2.sh        # via TokenbarV2.app (menu bar π)
+./start_tokenbar_v2.sh        # direct, menu bar π (pas via open : le bundle .app n'affiche pas l'icône)
 /opt/homebrew/bin/python3.12 v2/tokenbar_v2.py   # premier plan (debug)
 ```
 
 Prérequis : `pip install pyobjc-framework-Cocoa pyobjc-framework-WebKit`.
 
-Réglages : `~/.tokenbar_v2_settings.json`. Logs : `/tmp/tokenbar_v2.log`.
+Réglages : `~/.tokenbar_v2_settings.json` (active le lancement au login pour la persistance). Logs : `/tmp/tokenbar_v2.log`.
 Historique multi-source (proxy/CLI) : voir git (`/tmp/tokenbar_v2_multi_backup.py`
 pour la version précédente).
