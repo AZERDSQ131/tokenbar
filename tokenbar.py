@@ -1361,6 +1361,15 @@ def fetch_sync():
     oc, cc, cx, cu, pi = (f_oc.result(), f_cc.result(), f_cx.result(),
                            f_cu.result(), f_pi.result())
 
+    # Jours sans consommation : aujourd'hui à zéro dans les séries pour que
+    # les graphiques se terminent sur le vrai jour courant (pas le dernier actif).
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    _ZERO_BD = {"i": 0, "o": 0, "r": 0, "cr": 0, "cw": 0}
+    for src in (oc, cc, cx, cu, pi):
+        src["daily"].setdefault(today_str, 0)
+        src["daily_cost"].setdefault(today_str, 0.0)
+        src["daily_breakdown"].setdefault(today_str, dict(_ZERO_BD))
+
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
     ds_balance = fetch_deepseek_balance_cached()
