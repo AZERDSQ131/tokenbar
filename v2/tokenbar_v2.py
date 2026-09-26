@@ -366,18 +366,14 @@ html::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px
 .lbl{font-size:11.5px;font-weight:500;color:rgba(255,255,255,.55);margin-bottom:2px}
 .val{font-size:24px;font-weight:700;letter-spacing:-.7px;line-height:1}
 .val-sm{font-size:20px}
+#v-cost{color:#4ade80}
+#v-today{color:#fff}
 .sec{padding:10px 16px 6px;font-size:10px;font-weight:600;color:rgba(255,255,255,.35);
   text-transform:uppercase;letter-spacing:.07em}
 .sec .lnk{float:right;font-weight:400;text-transform:none;letter-spacing:0;
   color:rgba(255,255,255,.3);cursor:pointer;text-decoration:underline;
   text-decoration-color:rgba(255,255,255,.15);text-underline-offset:2px;font-size:11px}
 .sec .lnk:hover{color:rgba(255,255,255,.6)}
-.prow{display:flex;align-items:center;gap:8px;padding:6px 16px}
-.prow .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.prow .pname{font-size:12.5px;font-weight:500}
-.prow .pvals{margin-left:auto;text-align:right;font-size:12px}
-.prow .pvals .c{color:rgba(255,255,255,.45);font-size:11px}
-.prow .psub{font-size:10px;color:rgba(255,255,255,.3)}
 .trow{padding:5px 16px}
 .trow .tline{display:flex;align-items:baseline;gap:8px;font-size:12px}
 .trow .trk{color:rgba(255,255,255,.25);width:12px;font-size:11px}
@@ -392,7 +388,7 @@ canvas{display:block;width:100%}
 .cp{background:none;border:none;color:rgba(255,255,255,.22);font-family:inherit;
   font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer}
 .cp:hover{color:rgba(255,255,255,.55)}
-.cp.active{color:rgba(255,255,255,.72);background:rgba(255,255,255,.08)}
+.cp.active{color:#fff;background:rgba(139,92,246,.35)}
 .chart-style-btn{background:none;border:none;color:rgba(255,255,255,.22);
   font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer}
 .chart-style-btn:hover{color:rgba(255,255,255,.55)}
@@ -412,7 +408,7 @@ canvas{display:block;width:100%}
 .btn:hover{color:#fff;background:rgba(255,255,255,.07)}
 </style></head><body>
 <div class="head">
-  <div><div class="title">\u03c0 Pi</div><div class="sub" id="sess-line">harness local</div></div>
+  <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Pi</div><div class="sub" id="sess-line">harness local</div></div>
   <button class="gear" onclick="act('settings')" title="Settings">\u2699</button>
 </div>
 <div id="sync-line" class="sync"></div>
@@ -422,8 +418,6 @@ canvas{display:block;width:100%}
   <div><div class="lbl">All time</div><div class="val val-sm" id="v-all">\u2014</div></div>
   <div><div class="lbl">Cost today</div><div class="val val-sm" id="v-cost">\u2014</div></div>
 </div>
-<div class="sec">Providers</div>
-<div id="prov-list"></div>
 <div class="sec">Tokens</div>
 <div class="chart-wrap"><canvas id="cv"></canvas></div>
 <div class="chart-controls"><div class="chart-periods">
@@ -480,6 +474,7 @@ function drawBar(ctx,x,y,w,h,r){
 }
 
 function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
+  var CC=(typeof CHART_COLORS!=='undefined'&&CHART_COLORS[cvId])||[255,255,255];
   hitsRef.length=0;
   const cv=document.getElementById(cvId),ctx=cv.getContext('2d');
   const dpr=window.devicePixelRatio||2,cw=cv.offsetWidth||300,ch=90;
@@ -509,7 +504,7 @@ function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
   if(__chartStyle==='bars'){
     daily.forEach((d,i)=>{
       const r=vals[i]/max,bh=Math.max(2,r*bMaxH),x=i*(bw+gap)+gap+leftPad,y=bl-bh;
-      ctx.fillStyle='rgba(255,255,255,'+(0.3+0.55*r).toFixed(2)+')';
+      ctx.fillStyle='rgba('+CC[0]+','+CC[1]+','+CC[2]+','+(0.3+0.55*r).toFixed(2)+')';
       drawBar(ctx,x,y,bw,bh,2);
       hitsRef.push({x0:x,x1:x+bw,cx:x+bw/2,y:y,date:d.date,val:vals[i]});
     });
@@ -521,22 +516,22 @@ function drawChartWith(cvId, daily, valFn, hitsRef, showYAxis) {
     }));
     if(__chartStyle==='area'){
       const grad=ctx.createLinearGradient(0,0,0,bl);
-      grad.addColorStop(0,'rgba(255,255,255,.28)');
-      grad.addColorStop(1,'rgba(255,255,255,.02)');
+      grad.addColorStop(0,'rgba('+CC[0]+','+CC[1]+','+CC[2]+',.30)');
+      grad.addColorStop(1,'rgba('+CC[0]+','+CC[1]+','+CC[2]+',.03)');
       ctx.fillStyle=grad;ctx.beginPath();
       ctx.moveTo(pts[0].x,bl);
       pts.forEach(p=>ctx.lineTo(p.x,p.y));
       ctx.lineTo(pts[pts.length-1].x,bl);
       ctx.closePath();ctx.fill();
     }
-    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;
+    ctx.strokeStyle='rgba('+CC[0]+','+CC[1]+','+CC[2]+',.85)';ctx.lineWidth=1.5;
     ctx.beginPath();
     pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
     ctx.stroke();
     pts.forEach(p=>{
       hitsRef.push({x0:p.x-bw/2,x1:p.x+bw/2,cx:p.x,y:p.y,date:p.date,val:p.val});
       ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);
-      ctx.fillStyle='rgba(255,255,255,'+(0.45+0.55*p.r).toFixed(2)+')';
+      ctx.fillStyle='rgba('+CC[0]+','+CC[1]+','+CC[2]+','+(0.45+0.55*p.r).toFixed(2)+')';
       ctx.fill();
     });
   }
@@ -569,14 +564,9 @@ var __manualAt=0;
 var __chartPeriod='1m',__chartStyle='bars',__lastDaily=[],__lastDailyCost=[];
 var __chartHits=[],__chartHits2=[];
 var STYLES=['bars','line','area'];
-var PROV_COLORS={'opencode-go':'#8b5cf6','mistral':'#fb923c','groq':'#f87171',
-  'openrouter':'#3b82f6','deepseek':'#22d3ee','nim':'#4ade80','opencode':'#a78bfa',
-  'nvidia':'#34d399'};
-function provColor(n){
-  if(PROV_COLORS[n])return PROV_COLORS[n];
-  var h=0;for(var i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))>>>0;
-  return 'hsl('+(h%360)+',60%,60%)';
-}
+var CHART_COLORS={cv:[167,139,250],cv2:[74,222,128]};
+var RANK_COLORS=['#fbbf24','#e5e7eb','#fb923c'];
+function rankColor(i){return RANK_COLORS[i]||'#8b5cf6';}
 function shortName(n){
   var s=String(n).replace(/^[^\/]+\//,'');
   return s.length>26?s.slice(0,25)+'\u2026':s;
@@ -620,22 +610,13 @@ function render(d){
   $('sess-line').textContent='harness local \u00b7 '+d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
   var f=d.fetched_at?new Date(d.fetched_at*1000):null;
   $('sync-line').textContent=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
-  var provs=Object.keys(d.providers||{}).map(function(n){
-    var v=d.providers[n];return {n:n,t:v.tokens,c:v.cost,tt:v.today||0,tc:v.today_cost||0};
-  }).sort(function(a,b){return b.t-a.t});
-  $('prov-list').innerHTML=provs.map(function(p){
-    return '<div class="prow"><span class="dot" style="background:'+provColor(p.n)+'"></span>'
-      +'<span class="pname">'+shortName(p.n)+'</span>'
-      +'<span class="pvals">'+fmt(p.t)+' <span class="c">'+fmtCostFull(p.c)+'</span>'
-      +(p.tt?'<div class="psub">today '+fmt(p.tt)+'</div>':'')+'</span></div>';
-  }).join('')||'<div class="prow"><span class="psub">aucune donn\u00e9e</span></div>';
   var mx=Math.max.apply(null,[1].concat((d.top_models||[]).map(function(m){return m.tokens})));
   $('top-list').innerHTML=(d.top_models||[]).map(function(m,i){
     var pct=Math.max(2,Math.round(m.tokens/mx*100));
     return '<div class="trow"><div class="tline"><span class="trk">'+(i+1)+'</span>'
       +'<span class="tname">'+shortName(m.name)+'</span>'
       +'<span class="tvals">'+fmt(m.tokens)+' \u00b7 '+fmtCostFull(m.cost)+'</span></div>'
-      +'<div class="tbar"><div style="width:'+pct+'%"></div></div></div>';
+      +'<div class="tbar"><div style="width:'+pct+'%;background:'+rankColor(i)+'"></div></div></div>';
   }).join('');
   document.querySelectorAll('.cp').forEach(function(b){b.classList.toggle('active',b.dataset.p===__chartPeriod)});
   document.getElementById('style-btn').textContent=__chartStyle;
@@ -1165,14 +1146,8 @@ class AppDelegate(NSObject):
         self._last_data = data
         try:
             title = _navbar_title(data['today_tok'])
-            btn = self._item.button()
-            btn.setTitle_(title)
-            try:
-                rb = btn.title()
-                vis = self._item.isVisible() if hasattr(self._item, 'isVisible') else '?'
-            except Exception as e2:
-                rb, vis = 'ERR', repr(e2)[:80]
-            self._log(f"menu: {title} | readback={rb} | visible={vis}")
+            self._item.button().setTitle_(title)
+            self._log("menu: " + title)
         except Exception:
             pass
         if first:
@@ -1360,8 +1335,7 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = (s.get("top_models") or [{}])[0].get("name")
-        provs = sorted(s.get("providers", {}).items(), key=lambda kv: -kv[1]["tokens"])
-        sources = [k for k, v in provs if v.get("today", 0) > 0]
+        sources = ["Pi"] if today > 0 else []
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
