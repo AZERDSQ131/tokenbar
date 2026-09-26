@@ -240,3 +240,19 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
 - `_pi_all_messages()` : cache incrémental par fichier (mtime+taille, lignes
   re-parsées uniquement si changées). Froid ~0,5 s, tiède ~0 s.
 - C'est la plus grosse source (950 M tokens, $7,27 — tout le reste est free).
+
+### App side — v2 reconstruite 100 % Pi (2026-09-26)
+
+- Interface neuve mono-source (plus d'onglets proxy/CLI) : header `π Pi`,
+  stats, **providers** (tokens + coûts exacts par fournisseur), graphiques,
+  top 8 modèles inline + fenêtre Models, quota, Flex, alertes, notif.
+- Réutilisé verbatim de la v1 : `drawBar`/`drawChartWith`, `renderQuota`,
+  `fmt`/`fmtCost`/`fmtDate`, fenêtre Models, fenêtre Settings, pattern async
+  (fond + `performSelectorOnMainThread` → `_applyFetched_`).
+- Payload plat (plus de `data["all"]`) : today/week/all, costs exacts,
+  `providers{name:{tokens,cost,today,today_cost}}`, `top_models[8]`,
+  `sessions_today/all`, séries 366 j continues.
+- Garde-fous JS : `injectData` n'écrase les prefs période/style que si
+  l'utilisateur n'a pas touché aux boutons depuis 60 s (`__manualAt`).
+- Rendu testé headless : `MAIN_JS` extrait + stubs DOM + vrai payload sous
+  `node --check` et exécution (`RENDER-OK`).
