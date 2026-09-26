@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -983,7 +984,7 @@ def _cursor_auth():
         return None, None
 
 
-def _fetch_cursor_events():
+def _fetch_cursor_events(page_size=1000):
     token, sub = _cursor_auth()
     if not token or not sub:
         return []
@@ -992,7 +993,7 @@ def _fetch_cursor_events():
     page = 1
     while True:
         body = json.dumps({"teamId": 0, "startDate": "0", "endDate": "9999999999999",
-                            "page": page, "pageSize": 200}).encode()
+                            "page": page, "pageSize": page_size}).encode()
         req = urllib.request.Request(
             "https://cursor.com/api/dashboard/get-filtered-usage-events",
             data=body, method="POST",
@@ -1022,7 +1023,10 @@ def fetch_cursor(day_ms, week_ms, month_ms, since_ms=None):
     if now - _cursor_cache["ts"] < 120 and _cursor_cache["data"] is not None:
         return _cursor_cache["data"]
     try:
-        events = _fetch_cursor_events()
+        try:
+            events = _fetch_cursor_events()
+        except Exception:
+            events = _fetch_cursor_events(page_size=200)
         if not events:
             _cursor_cache = {"ts": now, "data": empty}
             return empty
@@ -1317,7 +1321,27 @@ def _top(models: dict) -> str:
     return max(models, key=models.get) if models else "—"
 
 
-def fetch():
+_FETCH_POOL = ThreadPoolExecutor(max_workers=5, thread_name_prefix="tokenbar-fetch")
+_fetch_cache = {"ts": 0.0, "data": None}
+FETCH_TTL = 10.0
+
+
+def fetch(use_cache=True):
+    """Point d'entrée unique : cache court + calcul parallélisé.
+
+    Ne jamais appeler sur le main thread quand le cache peut être expiré —
+    depuis l'UI, passer par AppDelegate.refresh_in_background()."""
+    now = time.time()
+    if use_cache and _fetch_cache["data"] is not None and now - _fetch_cache["ts"] < FETCH_TTL:
+        return _fetch_cache["data"]
+    data = fetch_sync()
+    if data is not None:
+        _fetch_cache["ts"] = now
+        _fetch_cache["data"] = data
+    return data
+
+
+def fetch_sync():
     now_dt   = datetime.now()
     day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     week_s   = day_s  - 6  * 86400
@@ -1328,15 +1352,14 @@ def fetch():
     month_ms = int(month_s * 1000)
     since_ms = int(since_s * 1000)
 
-    oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
-    cc = fetch_claude_code(day_s, week_s, month_s, since_s)
-    cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
-    cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
-    pi = fetch_pi(day_s, week_s, month_s, since_s)
-
-    elapsed_h = max(0.5, (time.time() - day_s) / 3600)
-    tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
-    ds_balance = fetch_deepseek_balance_cached()
+    # Les 5 sources en parallèle : Cursor (réseau, ~10 s+) ne bloque plus les autres.
+    f_oc = _FETCH_POOL.submit(fetch_opencode, day_ms, week_ms, month_ms, since_ms)
+    f_cc = _FETCH_POOL.submit(fetch_claude_code, day_s, week_s, month_s, since_s)
+    f_cx = _FETCH_POOL.submit(fetch_codex, day_ms, week_ms, month_ms, since_ms)
+    f_cu = _FETCH_POOL.submit(fetch_cursor, day_ms, week_ms, month_ms, since_ms)
+    f_pi = _FETCH_POOL.submit(fetch_pi, day_s, week_s, month_s, since_ms)
+    oc, cc, cx, cu, pi = (f_oc.result(), f_cc.result(), f_cx.result(),
+                           f_cu.result(), f_pi.result())
 
     elapsed_h = max(0.5, (time.time() - day_s) / 3600)
     tok_per_hour = int(cc["today"] / elapsed_h) if cc.get("today", 0) > 0 else 0
@@ -1499,7 +1522,15 @@ def fetch():
     }
 
 
-def fetch_all_models():
+_models_cache = {"ts": 0.0, "data": None}
+MODELS_TTL = 30.0
+
+
+def fetch_all_models(use_cache=True):
+    global _models_cache
+    now = time.time()
+    if use_cache and _models_cache["data"] is not None and now - _models_cache["ts"] < MODELS_TTL:
+        return _models_cache["data"]
     now_dt   = datetime.now()
     day_s    = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     week_s   = day_s - 6  * 86400
@@ -1510,11 +1541,13 @@ def fetch_all_models():
     month_ms = int(month_s * 1000)
     since_ms = int(since_s * 1000)
 
-    oc = fetch_opencode(day_ms, week_ms, month_ms, since_ms)
-    cc = fetch_claude_code(day_s, week_s, month_s, since_s)
-    cx = fetch_codex(day_ms, week_ms, month_ms, since_ms)
-    cu = fetch_cursor(day_ms, week_ms, month_ms, since_ms)
-    pi = fetch_pi(day_s, week_s, month_s, since_s)
+    f_oc = _FETCH_POOL.submit(fetch_opencode, day_ms, week_ms, month_ms, since_ms)
+    f_cc = _FETCH_POOL.submit(fetch_claude_code, day_s, week_s, month_s, since_ms)
+    f_cx = _FETCH_POOL.submit(fetch_codex, day_ms, week_ms, month_ms, since_ms)
+    f_cu = _FETCH_POOL.submit(fetch_cursor, day_ms, week_ms, month_ms, since_ms)
+    f_pi = _FETCH_POOL.submit(fetch_pi, day_s, week_s, month_s, since_ms)
+    oc, cc, cx, cu, pi = (f_oc.result(), f_cc.result(), f_cx.result(),
+                           f_cu.result(), f_pi.result())
 
     def make_rows(oc_m, oc_mc, cc_m, cc_mc, cx_m, cx_mc, cu_m, cu_mc, pi_m, pi_mc):
         rows = []
@@ -1535,12 +1568,14 @@ def fetch_all_models():
             rows.append({"name": name, "tokens": tok, "cost": round(cost, 4), "source": "Pi"})
         return sorted(rows, key=lambda x: -x["tokens"])
 
-    return {
+    data = {
         "1d":  make_rows(oc["models_1d"], oc["model_costs_1d"], cc["models_1d"], cc["model_costs_1d"], cx["models_1d"], cx["model_costs_1d"], cu["models_1d"], cu["model_costs_1d"], pi["models_1d"], pi["model_costs_1d"]),
         "7d":  make_rows(oc["models_7d"], oc["model_costs_7d"], cc["models_7d"], cc["model_costs_7d"], cx["models_7d"], cx["model_costs_7d"], cu["models_7d"], cu["model_costs_7d"], pi["models_7d"], pi["model_costs_7d"]),
         "1m":  make_rows(oc["models_1m"], oc["model_costs_1m"], cc["models_1m"], cc["model_costs_1m"], cx["models_1m"], cx["model_costs_1m"], cu["models_1m"], cu["model_costs_1m"], pi["models_1m"], pi["model_costs_1m"]),
         "all": make_rows(oc["models"],    oc["model_costs"],    cc["models"],    cc["model_costs"],    cx["models"],    cx["model_costs"],    cu["models"],    cu["model_costs"],    pi["models"],    pi["model_costs"]),
     }
+    _models_cache = {"ts": now, "data": data}
+    return data
 
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
@@ -2589,6 +2624,10 @@ class AppDelegate(NSObject):
         self._awake_thread = None
         self._awake_stop = threading.Event()
         self._caffeinate_proc = None
+        self._last_data = None
+        self._pending_data = None
+        self._pending_models = None
+        self._fetching = False
 
         NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
 
@@ -2633,6 +2672,7 @@ class AppDelegate(NSObject):
 
         threading.Thread(target=_refresh_limits_bg, daemon=True).start()
         self._start_timer()
+        self.refresh_in_background()
 
     @objc.python_method
     def _start_timer(self):
@@ -2648,25 +2688,57 @@ class AppDelegate(NSObject):
         else:
             btn = self._item.button()
             self._pop.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, 1)
+            # Affichage instantané : on peint les dernières données connues
+            # sans attendre le réseau, puis on rafraîchit en arrière-plan.
             app_ref = self
             def _check_and_inject(result, error):
                 if result:
-                    app_ref.inject_data()
+                    if app_ref._last_data is not None:
+                        app_ref._inject_js(app_ref._last_data)
                 else:
                     app_ref.bootstrap_and_inject()
             self._wv.evaluateJavaScript_completionHandler_(
                 "typeof injectData !== 'undefined'", _check_and_inject)
+            self.refresh_in_background()
 
-    def tick_(self, _):
-        data = fetch()
-        if data:
+    @objc.python_method
+    def refresh_in_background(self):
+        """Fetch hors du main thread, puis mise à jour UI sur le main thread."""
+        if self._fetching:
+            return
+        self._fetching = True
+        def work():
+            try:
+                data = fetch()
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                data = None
+            self._pending_data = data
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_applyFetched_:", True, False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _applyFetched_(self, _):
+        data = self._pending_data
+        self._pending_data = None
+        self._fetching = False
+        if not data:
+            return
+        self._last_data = data
+        try:
             self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+        except Exception:
+            pass
         if self._pop.isShown():
             self._inject_js(data)
         if not hasattr(self, '_login_start_synced'):
             self._ensure_login_start()
         self.check_daily_notification()
         self._check_alerts(data)
+
+    def tick_(self, _):
+        self.refresh_in_background()
 
     @objc.python_method
     def _ensure_login_start(self):
@@ -2789,24 +2861,21 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def bootstrap_and_inject(self):
-        """Injecte MAIN_JS dans le monde page, puis les données."""
-        data = fetch()
-        if data:
-            self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
+        """Injecte MAIN_JS dans le monde page, puis les données (sans bloquer)."""
+        last = self._last_data
         def on_bootstrap(result, error):
             if error:
                 print(f"[tokenbar] JS bootstrap error: {error}", flush=True)
-            if not error and data:
-                self._inject_js(data)
+            elif last is not None:
+                self._inject_js(last)
         self._wv.evaluateJavaScript_completionHandler_(MAIN_JS + "\n'bootstrapped'", on_bootstrap)
+        self.refresh_in_background()
 
     @objc.python_method
     def inject_data(self):
-        data = fetch()
-        if not data:
-            self._item.button().setTitle_("⚠"); return
-        self._item.button().setTitle_(_navbar_title(data['all']['today_tok']))
-        self._inject_js(data)
+        if self._last_data is not None:
+            self._inject_js(self._last_data)
+        self.refresh_in_background()
 
     @objc.python_method
     def _inject_js(self, data):
@@ -2881,7 +2950,7 @@ class AppDelegate(NSObject):
 
     @objc.python_method
     def flex(self):
-        data = fetch()
+        data = self._last_data if self._last_data is not None else fetch()
         if not data:
             return
         s = data["all"]
@@ -2920,7 +2989,20 @@ All time: {fmt(total)} tokens""" + (f"""
 
     @objc.python_method
     def show_models_window(self):
-        models = fetch_all_models()
+        # Ouverture instantanée avec le cache, données fraîches en arrière-plan.
+        if (_models_cache.get("data") is None
+                or time.time() - _models_cache.get("ts", 0.0) > MODELS_TTL):
+            def work():
+                try:
+                    fresh = fetch_all_models()
+                except Exception:
+                    fresh = None
+                if fresh is not None:
+                    self._pending_models = fresh
+                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                        "_applyModels_:", True, False)
+            threading.Thread(target=work, daemon=True).start()
+        models = _models_cache.get("data") or {"1d": [], "7d": [], "1m": [], "all": []}
         html   = MODELS_HTML_TMPL.replace("MODELS_PLACEHOLDER", json.dumps(models))
         dark   = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
 
@@ -2955,6 +3037,20 @@ All time: {fmt(total)} tokens""" + (f"""
         NSApp.activateIgnoringOtherApps_(True)
         self._models_win = win
         self._models_wv  = wv
+
+    def _applyModels_(self, _):
+        models = self._pending_models
+        self._pending_models = None
+        if not models:
+            return
+        if self._models_win is None or self._models_wv is None:
+            return
+        try:
+            html = MODELS_HTML_TMPL.replace("MODELS_PLACEHOLDER", json.dumps(models))
+            self._models_wv.loadHTMLString_baseURL_(
+                html, NSURL.fileURLWithPath_(str(Path.home()) + "/"))
+        except Exception:
+            pass
 
     def show_settings_window(self):
         try:
