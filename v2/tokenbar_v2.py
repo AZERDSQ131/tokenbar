@@ -409,7 +409,6 @@ canvas{display:block;width:100%}
 </style></head><body>
 <div class="head">
   <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Pi</div><div class="sub" id="sess-line">harness local</div></div>
-  <button class="gear" onclick="act('settings')" title="Settings">\u2699</button>
 </div>
 <div id="sync-line" class="sync"></div>
 <div class="stats">
