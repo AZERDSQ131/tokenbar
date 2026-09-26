@@ -391,25 +391,18 @@ def fetch_all_models(use_cache=True):
         return sorted(rows, key=lambda x: -x["tokens"])
 
     def cli_rows():
-        try:
-            sessions = _cli_get("/session")
-        except Exception:
-            return {"1d": [], "7d": [], "1m": [], "all": []}
+        rows = _cli_all_messages()
+        if rows is None:
+            return _cli_groups_cache["data"]
         now_d = datetime.now().date()
         cuts = {"1d": now_d.isoformat(),
                 "7d": (now_d - timedelta(days=6)).isoformat(),
                 "1m": (now_d - timedelta(days=29)).isoformat()}
         groups = {"1d": {}, "7d": {}, "1m": {}, "all": {}}
-        for sn in sessions:
-            t = sn.get("tokens") or {}
-            ch = t.get("cache") or {}
-            tok = t.get("input", 0) + t.get("output", 0) + ch.get("read", 0) + ch.get("write", 0)
+        for (day, name, i, o, r, cr, cw, cst) in rows:
+            tok = i + o + cr + cw
             if not tok:
                 continue
-            name = ((sn.get("model") or {}).get("id")) or "unknown"
-            tm = (sn.get("time") or {}).get("updated", 0)
-            day = _cli_day(tm) if tm else now_d.isoformat()
-            cst = sn.get("cost") or 0.0
             wins = ["all"]
             if day >= cuts["1m"]:
                 wins.append("1m")
@@ -421,10 +414,12 @@ def fetch_all_models(use_cache=True):
                 e = groups[w].setdefault(name, {"tokens": 0, "cost": 0.0})
                 e["tokens"] += tok
                 e["cost"] += cst
-        return {w: sorted([{"name": n, "tokens": e["tokens"],
+        data = {w: sorted([{"name": n, "tokens": e["tokens"],
                             "cost": round(e["cost"], 4), "source": "CLI"}
                            for n, e in g.items()], key=lambda x: -x["tokens"])
                 for w, g in groups.items()}
+        _cli_groups_cache["data"] = data
+        return data
 
     data = {}
     cli = cli_rows()
@@ -454,17 +449,66 @@ def _cli_day(ms):
         return datetime.now().strftime("%Y-%m-%d")
 
 
-def fetch_cli_tab():
-    """Source 2 : serveur OpenCode local (coûts exacts). Onglet ou None."""
+_cli_msg_cache = {"by_session": {}}
+_cli_groups_cache = {"data": {"1d": [], "7d": [], "1m": [], "all": []}}
+
+
+def _cli_all_messages():
+    """Précision niveau message (modèle + jour exacts), cache incrémental :
+    seules les sessions modifiées depuis le dernier poll sont re-lues."""
     try:
         sessions = _cli_get("/session")
     except Exception as e:
         print(f"[tokenbar-v2] CLI injoignable: {e}", flush=True)
         return None
+    live = set()
+    for sn in sessions:
+        sid = sn.get("id")
+        if not sid:
+            continue
+        live.add(sid)
+        upd = (sn.get("time") or {}).get("updated", 0)
+        cached = _cli_msg_cache["by_session"].get(sid)
+        if cached is not None and cached.get("updated") == upd:
+            continue
+        try:
+            msgs = _cli_get(f"/session/{sid}/message?limit=500")
+        except Exception as e:
+            print(f"[tokenbar-v2] messages {sid[:12]}: {e}", flush=True)
+            continue
+        rows = []
+        for m in msgs:
+            info = m.get("info", {}) or {}
+            if info.get("role") != "assistant":
+                continue
+            t = info.get("tokens") or {}
+            ch = t.get("cache") or {}
+            tm = (info.get("time") or {}).get("created", 0)
+            rows.append(((_cli_day(tm) if tm else _cli_day(upd)),
+                         info.get("modelID") or "unknown",
+                         t.get("input", 0), t.get("output", 0),
+                         t.get("reasoning", 0),
+                         ch.get("read", 0), ch.get("write", 0),
+                         info.get("cost") or 0.0))
+        _cli_msg_cache["by_session"][sid] = {"updated": upd, "rows": rows}
+    for sid in list(_cli_msg_cache["by_session"]):
+        if sid not in live:
+            del _cli_msg_cache["by_session"][sid]
+    _cli_msg_cache["nsess"] = len(live)
+    out = []
+    for v in _cli_msg_cache["by_session"].values():
+        out.extend(v["rows"])
+    return out
+
+
+def fetch_cli_tab():
+    """Source 2 : serveur OpenCode local (coûts exacts). Onglet ou None."""
+    rows = _cli_all_messages()
+    if rows is None:
+        return None
     now_dt = datetime.now()
     today_str = now_dt.date().isoformat()
     week_cut = (now_dt.date() - timedelta(days=6)).isoformat()
-    month_cut = (now_dt.date() - timedelta(days=29)).isoformat()
     today_s = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     elapsed_h = max(0.5, (time.time() - today_s) / 3600)
 
@@ -473,19 +517,10 @@ def fetch_cli_tab():
     today_tok = week_tok = all_tok = 0
     bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 
-    for sn in sessions:
-        t = sn.get("tokens") or {}
-        ch = t.get("cache") or {}
-        i, o = t.get("input", 0), t.get("output", 0)
-        cr, cw = ch.get("read", 0), ch.get("write", 0)
-        r = t.get("reasoning", 0)
+    for (day, name, i, o, r, cr, cw, cst) in rows:
         tok = i + o + cr + cw
         if not tok:
             continue
-        cst = sn.get("cost") or 0.0
-        name = ((sn.get("model") or {}).get("id")) or "unknown"
-        tm = (sn.get("time") or {}).get("updated", 0)
-        day = _cli_day(tm) if tm else today_str
         all_tok += tok
         cost_all += cst
         mall[name] = mall.get(name, 0) + tok
@@ -520,7 +555,7 @@ def fetch_cli_tab():
         "all_tok": all_tok,
         "today_req": 0,
         "today_sess": None,
-        "all_sess": len(sessions),
+        "all_sess": _cli_msg_cache.get("nsess", 0),
         "top_model": _top(mall),
         "top_model_today": _top(m1d),
         "daily": daily,
