@@ -194,3 +194,20 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
 - Own identity: `~/.tokenbar_v2_settings.json`, `/tmp/tokenbar_v2.log`,
   login agent `com.tokenbarv2`, bundle `TokenbarV2.app` (runs the repo file
   directly — no copy step unlike v1).
+
+### App side — source 2 : serveur OpenCode local (`CLI`, coûts exacts)
+
+- LaunchAgent `com.opencode.server` : `opencode serve --port 4096 --hostname
+  127.0.0.1` avec `WorkingDirectory=/` (projet `global` → voit les sessions
+  des 21 projets ; sans ça, la vue est limitée au cwd du serveur).
+- `GET /session` suffit (un seul appel) : chaque session porte déjà
+  `cost` (exact, calculé par OpenCode) + `tokens{input,output,reasoning,
+  cache{read,write}}` + `model.id` + `time.updated`.
+- `GET /session/:id/message` donne le détail par message (même shape) —
+  utilisé ponctuellement pour vérif, pas en polling (N appels).
+- Attribution : une session est rangée sur son **dernier modèle** et son
+  **jour de dernière activité** (sessions multi-modèles/jours approximées).
+- Onglets v2 : `All` (proxy + CLI mergés, légende par source via
+  `daily_by_source {proxy, cli}`) / `⬢ Proxy` / `CLI`. Fenêtre modèles :
+  badges `Proxy` / `CLI`. Ligne `MAJ HH:MM · proxy/CLI hors ligne` si une
+  source tombe (l'autre continue, zéros honnêtes pour la source absente).
