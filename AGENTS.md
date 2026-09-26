@@ -255,3 +255,14 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
   l'utilisateur n'a pas touché aux boutons depuis 60 s (`__manualAt`).
 - Rendu testé headless : `MAIN_JS` extrait + stubs DOM + vrai payload sous
   `node --check` et exécution (`RENDER-OK`).
+
+### v2 — interface couleur sans providers (2026-09-26)
+
+- Section Providers supprimée ; graphiques colorés (tokens violet
+  `#a78bfa`, coûts vert `#4ade80` via `CHART_COLORS`, top modèles or/argent/
+  bronze puis violet, coût du jour vert, onglet période actif violet).
+- Lancement : **direct** (`nohup python3.12 v2/tokenbar_v2.py`, voir
+  `start_tokenbar_v2.sh`) — le bundle `TokenbarV2.app` via `open` fait
+  tourner le process (titre set, `isVisible=True`) **sans afficher l'icône**
+  (prouvé par screenshots A/B). Login agent `com.tokenbarv2` = même mode
+  direct, donc OK pour la persistance.
