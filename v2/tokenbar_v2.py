@@ -280,7 +280,10 @@ def _day_cost(day_entry):
 
 
 def _top(models: dict) -> str:
-    return max(models, key=models.get) if models else "—"
+    if not models:
+        return "—"
+    best = max(models, key=models.get)
+    return best if models[best] > 0 else "—"
 
 
 def fetch(use_cache=True):
