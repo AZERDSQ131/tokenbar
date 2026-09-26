@@ -211,3 +211,19 @@ Single source: your OpenCode proxy API. v2 never reads OpenCode files.
   `daily_by_source {proxy, cli}`) / `⬢ Proxy` / `CLI`. Fenêtre modèles :
   badges `Proxy` / `CLI`. Ligne `MAJ HH:MM · proxy/CLI hors ligne` si une
   source tombe (l'autre continue, zéros honnêtes pour la source absente).
+
+### App side — source 2 (précision niveau message)
+
+- `_cli_all_messages()` : `GET /session` (1 appel) puis `GET
+  /session/:id/message?limit=500` **uniquement pour les sessions modifiées**
+  (`time.updated` comparé au cache `_cli_msg_cache`), sessions supprimées
+  purgées. Froid ~3 s (100 sessions), tiède ~0,02 s.
+- Chaque message assistant donne : modèle exact (`modelID`), jour exact
+  (`time.created`), tokens `input/output/reasoning/cache.read/write` et
+  `cost` exact → `fetch_cli_tab()` et `cli_rows()` (fenêtre modèles) n'ont
+  plus l'approximation session (dernier modèle / jour lumpé).
+- Écart constaté vs agrégats session : ~1,4 % (troncation limit=500 sur les
+  méga-sessions + arrondis) — le niveau message est la référence.
+- Autres endpoints utiles repérés (non branchés) : `/session/status`,
+  `/event` (SSE live `message.updated` — piste pour du push temps réel),
+  `/config/providers` (modèles par défaut, pas de prix).
