@@ -106,8 +106,19 @@ JS injection flow: `webView_didFinishNavigation_` → `bootstrap_and_inject()` �
 
 ### Refresh
 
-- `NSTimer` every 15 seconds (`REFRESH = 15.0`)
-- Menu bar updates on every tick; popover only if open
+- `NSTimer` every 15 seconds (`REFRESH = 15.0`) → `tick_` → `refresh_in_background()`
+- `fetch()` never runs on the main thread from UI paths: `refresh_in_background()`
+  runs `fetch()` on a daemon thread, then applies results on the main thread via
+  `performSelectorOnMainThread` → `_applyFetched_:` (menubar title, popover inject
+  if open, alerts, daily notification). Payloads travel via `self._pending_data`
+  (never through ObjC args) to avoid NSDictionary bridging.
+- `toggle_` (menu bar click) shows the popover instantly, paints `self._last_data`
+  immediately (no fetch), then triggers `refresh_in_background()`.
+- `fetch()` wrapper: 10 s TTL (`_fetch_cache`, `FETCH_TTL`). `fetch_sync()` runs the
+  5 sources in parallel via `_FETCH_POOL` so slow Cursor network doesn't block others.
+- Cursor API uses `pageSize=1000` (fallback 200 on error) to cut paginated requests.
+- Models window: opens instantly with `_models_cache` (30 s TTL, `MODELS_TTL`),
+  refreshes in background and reloads via `_applyModels_:`.
 - Menu bar format: `◆ tokens / cost` (today's totals — e.g. `◆ 1.2k / $0.04`)
 - 30s cache on `fetch_claude_code` (`_cc_cache`) to avoid rescanning all JSONL files
 
