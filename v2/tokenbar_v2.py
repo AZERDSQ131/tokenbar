@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenCode Token Bar — OpenCode + Claude Code."""
+"""Token Bar v2 — Pi + Codex CLI + Claude Code (sources locales)."""
 
 import base64
 import json
@@ -40,6 +40,8 @@ CODEX_DB    = Path.home() / ".codex/state_5.sqlite"
 OC_WF_DIR   = Path.home() / ".config/opencode/workflows"
 CURSOR_DB   = Path.home() / "Library/Application Support/Cursor/User/globalStorage/state.vscdb"
 PI_DIR      = Path.home() / ".pi/agent/sessions"
+CODEX_SESS_DIR = Path.home() / ".codex/sessions"
+CLAUDE_PROJ_DIR = Path.home() / ".claude/projects"
 
 W, H   = 360, 320
 DEFAULT_REFRESH = 15.0
@@ -125,11 +127,92 @@ def fmt(n):
 def _navbar_title(today_tok):
     return "\u03c0 " + fmt(today_tok)
 
-# ── Données : pi local uniquement ─────────────────────────────────────────────
-# Sessions ~/.pi/agent/sessions/*/*.jsonl — coûts exacts calculés par pi.
-# Granularité message (modèle + jour + provider exacts), cache incrémental.
+# ── Données : Pi + Codex CLI + Claude Code ────────────────────────────────────
+# Pi : ~/.pi/agent/sessions/*/*.jsonl — coûts exacts pi (message-level).
+# Codex : ~/.codex/sessions/**/*.jsonl — type token_usage_record, champ
+#   payload.usage incrémental (turn/thread = cumuls, ne pas sommer).
+#   Modèle via turn_context.model. Coût estimé via claude_cost().
+# Claude : ~/.claude/projects/**/*.jsonl — message assistant + usage
+#   (input/cache_creation/cache_read/output + thinking). Coût estimé.
+# Cache incrémental par fichier (mtime+taille) pour les 3 sources.
+
+# (input $/M, output $/M, cache_write $/M, cache_read $/M) — cf v1/tokenbar.py
+CLAUDE_PRICING = [
+    ("opus-5",    5.00, 25.00, 6.25, 0.50),
+    ("opus-4",    5.00, 25.00, 6.25, 0.50),
+    ("sonnet-5",  2.00, 10.00, 2.50, 0.20),
+    ("sonnet-4",  3.00, 15.00, 3.75, 0.30),
+    ("haiku-4",   1.00,  5.00, 1.25, 0.10),
+    ("opus",      5.00, 25.00, 6.25, 0.50),
+    ("sonnet",    2.00, 10.00, 2.50, 0.20),
+    ("haiku",     0.25,  1.25, 0.30, 0.03),
+]
+
+BLENDED_RATES = [
+    ("big-pickle",             0.0),
+    ("qwen3-next-80b-a3b",     0.0),
+    ("nemotron-3-super-120b",  0.18),
+    ("sakana",                 0.0),
+    ("vibethinker",            0.0),
+    ("qwen3:4b",               0.0),
+    ("phi3",                   0.0),
+    ("nemotron-nano",          0.0),
+    ("owl-alpha",              0.0),
+    ("gpt-5.6-luna",       0.5),
+    ("gpt-5.6-terra",      5.0),
+    ("gpt-5.6-sol",       12.5),
+    ("gpt-5.5",           12.5),
+    ("gpt-5.4-mini",     1.875),
+    ("gpt-5.4",           6.25),
+    ("gpt-5.3-codex",    5.425),
+    ("gpt-5.2-codex",    5.425),
+    ("gpt-5.1-codex-max", 3.875),
+    ("gpt-5.1-codex-mini",0.775),
+    ("codex-auto-review", 5.425),
+    ("gpt-5.2",           5.425),
+    ("gpt-5.1",           3.875),
+    ("o4-mini",            2.0),
+    ("o4",                12.0),
+    ("o3",                20.0),
+    ("gpt-4o-mini",        0.3),
+    ("gpt-4o",             5.0),
+    ("deepseek-v4-flash",  0.35),
+    ("deepseek-v4.1-flash", 0.01),   # taux exact Pi: ~$0.0086/M (free-tier opencode-go)
+    ("muse-spark",          0.006),  # taux exact Pi: ~$0.006/M (variantes -free → 0 via règle "free")
+    ("stealth/ox-alpha",    0.0),    # taux exact Pi: $0.00/M
+    ("deepseek-v4-pro",    1.06),
+    ("z-ai/glm-5.2",        2.3),
+    ("glm-5.2",              2.3),
+    ("kimi-k2.6",         1.865),
+    ("mistral-medium-3.5",  3.3),
+    ("minimax-m3",          0.57),
+    ("mimo",               0.18),
+]
+
+
+def claude_cost(model: str, inp: int, out: int,
+                cache_write: int = 0, cache_read: int = 0) -> float:
+    m = (model or "").lower()
+    for key, ri, ro, rw, rr in CLAUDE_PRICING:
+        if key in m:
+            return (inp * ri + out * ro + cache_write * rw + cache_read * rr) / 1_000_000
+    if "free" in m:
+        return 0.0
+    total = inp + out + cache_write + cache_read
+    rates = dict(BLENDED_RATES)
+    try:
+        rates.update(_SETTINGS.get("custom_rates", {}))
+    except Exception:
+        pass
+    for key, rate in rates.items():
+        if key in m:
+            return total * rate / 1_000_000
+    return total * 5.0 / 1_000_000
+
 
 _pi_cache = {"files": {}, "rows": []}
+_codex_cache = {"files": {}, "rows": []}
+_claude_cache = {"files": {}, "rows": []}
 _pi_fetch = {"ts": 0.0, "data": None}
 PI_TTL = 10.0
 _models_cache = {"ts": 0.0, "data": None}
@@ -210,6 +293,172 @@ def _pi_all_messages():
     return list(_pi_cache["rows"])
 
 
+def _codex_day(ts):
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _codex_all_messages():
+    """Liste (day, model, provider, i, o, r, cr, cw, cost) depuis Codex CLI.
+    Somme payload.usage (incrémental) ; thread/turn = cumuls à ne pas sommer."""
+    if not CODEX_SESS_DIR.exists():
+        return []
+    try:
+        files = sorted(CODEX_SESS_DIR.glob("**/*.jsonl"))
+    except Exception as e:
+        print(f"[tokenbar-v2] codex scan: {e}", flush=True)
+        return list(_codex_cache["rows"])
+    live = set()
+    changed = False
+    for jf in files:
+        p = str(jf)
+        live.add(p)
+        try:
+            st = jf.stat()
+            sig = (st.st_mtime, st.st_size)
+        except Exception:
+            continue
+        if _codex_cache["files"].get(p) == sig:
+            continue
+        changed = True
+        _codex_cache["files"][p] = sig
+        rows = []
+        model = "codex"
+        try:
+            with open(jf, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    typ = entry.get("type")
+                    if typ == "turn_context":
+                        m = (entry.get("payload") or {}).get("model")
+                        if m:
+                            model = m
+                    elif typ == "token_usage_record":
+                        u = (entry.get("payload") or {}).get("usage") or {}
+                        try:
+                            i = int(u.get("input_tokens", 0))
+                            o = int(u.get("output_tokens", 0))
+                            cr = int(u.get("cached_input_tokens", 0))
+                            cw = int(u.get("cache_write_input_tokens", 0))
+                            r = int(u.get("reasoning_output_tokens", 0))
+                        except Exception:
+                            continue
+                        if not (i or o or cr or cw):
+                            continue
+                        day = _codex_day(entry.get("timestamp")) if entry.get("timestamp") else datetime.now().strftime("%Y-%m-%d")
+                        # input_tokens inclut déjà le cache → on stocke l'input net
+                        # pour que tok = i+o+cr+cw = total réel (cf total_tokens).
+                        i_net = max(0, i - cr - cw)
+                        cst = claude_cost(model, i_net, o, cw, cr)
+                        rows.append((day, model, "codex", i_net, o, r, cr, cw, cst))
+        except Exception:
+            continue
+        _codex_cache["files"][p + "#rows"] = rows
+    for p in list(_codex_cache["files"]):
+        if p.endswith("#rows"):
+            continue
+        if p not in live:
+            _codex_cache["files"].pop(p, None)
+            _codex_cache["files"].pop(p + "#rows", None)
+            changed = True
+    if changed:
+        out = []
+        for p, v in _codex_cache["files"].items():
+            if p.endswith("#rows"):
+                out.extend(v)
+        _codex_cache["rows"] = out
+    return list(_codex_cache["rows"])
+
+
+def _claude_day(ts):
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _claude_all_messages():
+    """Liste (day, model, provider, i, o, r, cr, cw, cost) depuis Claude Code."""
+    if not CLAUDE_PROJ_DIR.exists():
+        return []
+    try:
+        files = sorted(CLAUDE_PROJ_DIR.glob("**/*.jsonl"))
+    except Exception as e:
+        print(f"[tokenbar-v2] claude scan: {e}", flush=True)
+        return list(_claude_cache["rows"])
+    live = set()
+    changed = False
+    for jf in files:
+        p = str(jf)
+        live.add(p)
+        try:
+            st = jf.stat()
+            sig = (st.st_mtime, st.st_size)
+        except Exception:
+            continue
+        if _claude_cache["files"].get(p) == sig:
+            continue
+        changed = True
+        _claude_cache["files"][p] = sig
+        rows = []
+        try:
+            with open(jf, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if '"usage"' not in line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    msg = entry.get("message") or {}
+                    if msg.get("role") != "assistant":
+                        continue
+                    u = msg.get("usage")
+                    if not u:
+                        continue
+                    model = msg.get("model") or "claude"
+                    try:
+                        i = int(u.get("input_tokens", 0))
+                        o = int(u.get("output_tokens", 0))
+                        cr = int(u.get("cache_read_input_tokens", 0))
+                        cw = int(u.get("cache_creation_input_tokens", 0))
+                        cc = u.get("cache_creation") or {}
+                        cw += int(cc.get("ephemeral_1h_input_tokens", 0) or 0)
+                        cw += int(cc.get("ephemeral_5m_input_tokens", 0) or 0)
+                        det = u.get("output_tokens_details") or {}
+                        r = int(det.get("thinking_tokens", 0) or 0)
+                    except Exception:
+                        continue
+                    if not (i or o or cr or cw):
+                        continue
+                    ts = entry.get("timestamp")
+                    day = _claude_day(ts) if ts else datetime.now().strftime("%Y-%m-%d")
+                    cst = claude_cost(model, i, o, cw, cr)
+                    rows.append((day, model, "claude-code", i, o, r, cr, cw, cst))
+        except Exception:
+            continue
+        _claude_cache["files"][p + "#rows"] = rows
+    for p in list(_claude_cache["files"]):
+        if p.endswith("#rows"):
+            continue
+        if p not in live:
+            _claude_cache["files"].pop(p, None)
+            _claude_cache["files"].pop(p + "#rows", None)
+            changed = True
+    if changed:
+        out = []
+        for p, v in _claude_cache["files"].items():
+            if p.endswith("#rows"):
+                out.extend(v)
+        _claude_cache["rows"] = out
+    return list(_claude_cache["rows"])
+
+
 def _top(models: dict) -> str:
     if not models:
         return "—"
@@ -228,7 +477,7 @@ def fetch(use_cache=True):
 
 
 def fetch_sync():
-    rows = _pi_all_messages()
+    rows = _pi_all_messages() + _codex_all_messages() + _claude_all_messages()
     now_dt = datetime.now()
     today_str = now_dt.date().isoformat()
     week_cut = (now_dt.date() - timedelta(days=6)).isoformat()
@@ -287,10 +536,26 @@ def fetch_sync():
                          for n, t in mall.items()], key=lambda x: -x["tokens"])[:8]
 
     nfiles = sum(1 for p in _pi_cache["files"] if not p.endswith("#rows"))
+    nfiles += sum(1 for p in _codex_cache["files"] if not p.endswith(("#rows", "#model")))
+    nfiles += sum(1 for p in _claude_cache["files"] if not p.endswith("#rows"))
     tfiles = 0
     for p, v in _pi_cache["files"].items():
         if p.endswith("#rows") and any(r[0] == today_str for r in v):
             tfiles += 1
+    for p, v in _codex_cache["files"].items():
+        if p.endswith("#rows") and any(r[0] == today_str for r in v):
+            tfiles += 1
+    for p, v in _claude_cache["files"].items():
+        if p.endswith("#rows") and any(r[0] == today_str for r in v):
+            tfiles += 1
+    src_today = {"pi": 0, "codex": 0, "claude": 0}
+    src_all = {"pi": 0, "codex": 0, "claude": 0}
+    for (day, name, prov, i, o, r, cr, cw, cst) in rows:
+        tok = i + o + cr + cw
+        key = "pi" if prov not in ("codex", "claude-code") else ("codex" if prov == "codex" else "claude")
+        src_all[key] = src_all.get(key, 0) + tok
+        if day == today_str:
+            src_today[key] = src_today.get(key, 0) + tok
 
     return {
         "today_tok": today_tok,
@@ -309,6 +574,8 @@ def fetch_sync():
         "top_models": top_models,
         "tok_per_hour": int(today_tok / elapsed_h) if today_tok > 0 else 0,
         "fetched_at": time.time(),
+        "src_today": src_today,
+        "src_all": src_all,
     }
 
 
@@ -318,12 +585,17 @@ def fetch_all_models(use_cache=True):
     if use_cache and _models_cache["data"] is not None and now - _models_cache["ts"] < MODELS_TTL:
         return _models_cache["data"]
     rows = _pi_all_messages()
+    codex_rows = _codex_all_messages()
+    claude_rows = _claude_all_messages()
+    tagged = ([(d, n, p, i, o, r, cr, cw, c, "Pi") for (d, n, p, i, o, r, cr, cw, c) in rows]
+              + [(d, n, p, i, o, r, cr, cw, c, "Codex") for (d, n, p, i, o, r, cr, cw, c) in codex_rows]
+              + [(d, n, p, i, o, r, cr, cw, c, "Claude") for (d, n, p, i, o, r, cr, cw, c) in claude_rows])
     now_d = datetime.now().date()
     cuts = {"1d": now_d.isoformat(),
             "7d": (now_d - timedelta(days=6)).isoformat(),
             "1m": (now_d - timedelta(days=29)).isoformat()}
     groups = {"1d": {}, "7d": {}, "1m": {}, "all": {}}
-    for (day, name, prov, i, o, r, cr, cw, cst) in rows:
+    for (day, name, prov, i, o, r, cr, cw, cst, src) in tagged:
         tok = i + o + cr + cw
         if not tok:
             continue
@@ -335,12 +607,12 @@ def fetch_all_models(use_cache=True):
         if day == cuts["1d"]:
             wins.append("1d")
         for w in wins:
-            e = groups[w].setdefault(name, {"tokens": 0, "cost": 0.0})
+            e = groups[w].setdefault((src, name), {"tokens": 0, "cost": 0.0})
             e["tokens"] += tok
             e["cost"] += cst
     data = {w: sorted([{"name": n, "tokens": e["tokens"],
-                        "cost": round(e["cost"], 4), "source": "Pi"}
-                       for n, e in g.items()], key=lambda x: -x["tokens"])
+                        "cost": round(e["cost"], 4), "source": src}
+                       for (src, n), e in g.items()], key=lambda x: -x["tokens"])
             for w, g in groups.items()}
     _models_cache = {"ts": now, "data": data}
     return data
@@ -408,7 +680,7 @@ canvas{display:block;width:100%}
 .btn:hover{color:#fff;background:rgba(255,255,255,.07)}
 </style></head><body>
 <div class="head">
-  <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Pi</div><div class="sub" id="sess-line">harness local</div></div>
+  <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Pi + Codex + Claude</div><div class="sub" id="sess-line">harness local</div></div>
 </div>
 <div id="sync-line" class="sync"></div>
 <div class="stats">
@@ -606,7 +878,7 @@ function render(d){
   $('v-week').textContent=fmt(d.week_tok);
   $('v-all').textContent=fmt(d.all_tok);
   $('v-cost').textContent=fmtCostFull(d.cost_today);
-  $('sess-line').textContent='harness local \u00b7 '+d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
+  $('sess-line').textContent=(d.src_today?('Pi '+fmt(d.src_today.pi||0)+' \u00b7 Cx '+fmt(d.src_today.codex||0)+' \u00b7 Cc '+fmt(d.src_today.claude||0)+' \u00b7 '):'harness local \u00b7 ')+d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
   var f=d.fetched_at?new Date(d.fetched_at*1000):null;
   $('sync-line').textContent=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
   var mx=Math.max.apply(null,[1].concat((d.top_models||[]).map(function(m){return m.tokens})));
@@ -1334,7 +1606,11 @@ class AppDelegate(NSObject):
         total = s["all_tok"]
         cost  = s["cost_today"]
         model_today = (s.get("top_models") or [{}])[0].get("name")
-        sources = ["Pi"] if today > 0 else []
+        st = s.get("src_today") or {}
+        sources = []
+        if st.get("pi"): sources.append("Pi")
+        if st.get("codex"): sources.append("Codex")
+        if st.get("claude"): sources.append("Claude")
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
