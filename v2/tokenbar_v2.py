@@ -489,6 +489,9 @@ def fetch_sync():
     cost_all = cost_today = 0.0
     today_tok = week_tok = all_tok = 0
     bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0}
+    per_day_src = {"pi": {}, "codex": {}, "claude": {}}
+    hstats = {k: {"today": 0, "week": 0, "all": 0, "cost_today": 0.0, "cost_all": 0.0}
+              for k in ("pi", "codex", "claude")}
 
     for (day, name, prov, i, o, r, cr, cw, cst) in rows:
         tok = i + o + cr + cw
@@ -496,6 +499,15 @@ def fetch_sync():
             continue
         all_tok += tok
         cost_all += cst
+        skey = "pi" if prov not in ("codex", "claude-code") else ("codex" if prov == "codex" else "claude")
+        hs = hstats[skey]
+        hs["all"] += tok; hs["cost_all"] += cst
+        if day == today_str:
+            hs["today"] += tok; hs["cost_today"] += cst
+        if day >= week_cut:
+            hs["week"] += tok
+        se = per_day_src[skey].setdefault(day, [0, 0.0])
+        se[0] += tok; se[1] += cst
         mall[name] = mall.get(name, 0) + tok
         mcost[name] = mcost.get(name, 0.0) + cst
         pe = pall.setdefault(prov, {"tokens": 0, "cost": 0.0, "today": 0, "today_cost": 0.0})
@@ -548,14 +560,21 @@ def fetch_sync():
     for p, v in _claude_cache["files"].items():
         if p.endswith("#rows") and any(r[0] == today_str for r in v):
             tfiles += 1
-    src_today = {"pi": 0, "codex": 0, "claude": 0}
-    src_all = {"pi": 0, "codex": 0, "claude": 0}
-    for (day, name, prov, i, o, r, cr, cw, cst) in rows:
-        tok = i + o + cr + cw
-        key = "pi" if prov not in ("codex", "claude-code") else ("codex" if prov == "codex" else "claude")
-        src_all[key] = src_all.get(key, 0) + tok
-        if day == today_str:
-            src_today[key] = src_today.get(key, 0) + tok
+    daily_src = {}
+    for skey in ("pi", "codex", "claude"):
+        sd = per_day_src[skey]
+        st, sc = [], []
+        for j in range(pad_days + 1):
+            key = (pad_start + timedelta(days=j)).isoformat()
+            e = sd.get(key)
+            st.append({"date": key, "tokens": e[0] if e else 0})
+            sc.append({"date": key, "cost": e[1] if e else 0.0})
+        daily_src[skey] = {"tokens": st, "cost": sc}
+    harness = {k: {"today": v["today"], "week": v["week"], "all": v["all"],
+                   "cost_today": round(v["cost_today"], 4), "cost_all": round(v["cost_all"], 4)}
+               for k, v in hstats.items()}
+    src_today = {k: v["today"] for k, v in hstats.items()}
+    src_all = {k: v["all"] for k, v in hstats.items()}
 
     return {
         "today_tok": today_tok,
@@ -567,8 +586,8 @@ def fetch_sync():
         "sessions_all": nfiles,
         "daily": daily,
         "daily_cost": daily_cost,
-        "breakdown_today": bd_today,
-        "daily_breakdown": daily_bd,
+        "harness": harness,
+        "daily_src": daily_src,
         "providers": pall,
         "providers_today": p1d,
         "top_models": top_models,
@@ -674,13 +693,24 @@ canvas{display:block;width:100%}
 .quota-fill{height:100%;border-radius:3px;background:#4ade80;transition:width .3s}
 .quota-footer{display:flex;justify-content:space-between;font-size:10px;
   color:rgba(255,255,255,.35);margin-top:4px}
+.hrow{padding:5px 16px}
+.hline{display:flex;align-items:baseline;gap:8px;font-size:12px}
+.hdot{width:8px;height:8px;border-radius:50%;flex-shrink:0;align-self:center}
+.hname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hvals{margin-left:auto;color:rgba(255,255,255,.55);white-space:nowrap;font-size:11.5px}
+.hsub{font-size:10.5px;color:rgba(255,255,255,.35);margin-top:3px}
+.src-row{display:flex;gap:1px;padding:2px 16px 0}
+.cs{background:none;border:none;color:rgba(255,255,255,.22);font-family:inherit;
+  font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer}
+.cs:hover{color:rgba(255,255,255,.55)}
+.cs.active{color:#fff;background:rgba(255,255,255,.14)}
 .footer{display:flex;gap:2px;padding:8px 12px 12px;border-top:1px solid rgba(255,255,255,.06);margin-top:6px}
 .btn{flex:1;background:none;border:none;color:rgba(255,255,255,.4);font-family:inherit;
   font-size:11.5px;padding:7px 0;border-radius:6px;cursor:pointer}
 .btn:hover{color:#fff;background:rgba(255,255,255,.07)}
 </style></head><body>
 <div class="head">
-  <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Pi + Codex + Claude</div><div class="sub" id="sess-line">harness local</div></div>
+  <div><div class="title"><span style="color:#a78bfa">\u03c0</span> Tokenbar</div><div class="sub" id="sess-line">harness local</div></div>
 </div>
 <div id="sync-line" class="sync"></div>
 <div class="stats">
@@ -689,7 +719,15 @@ canvas{display:block;width:100%}
   <div><div class="lbl">All time</div><div class="val val-sm" id="v-all">\u2014</div></div>
   <div><div class="lbl">Cost today</div><div class="val val-sm" id="v-cost">\u2014</div></div>
 </div>
+<div class="sec">Par harness</div>
+<div id="harness-list" style="padding-bottom:2px"></div>
 <div class="sec">Tokens</div>
+<div class="src-row">
+  <button class="cs" data-s="all" onclick="setChartSrc('all')">All</button>
+  <button class="cs" data-s="pi" onclick="setChartSrc('pi')">Pi</button>
+  <button class="cs" data-s="codex" onclick="setChartSrc('codex')">Codex</button>
+  <button class="cs" data-s="claude" onclick="setChartSrc('claude')">Claude</button>
+</div>
 <div class="chart-wrap"><canvas id="cv"></canvas></div>
 <div class="chart-controls"><div class="chart-periods">
   <button class="cp" data-p="1d" onclick="setChartPeriod('1d')">1d</button>
@@ -848,6 +886,13 @@ function filterByPeriod(daily){
   var n=__chartPeriod==='1d'?1:__chartPeriod==='7d'?7:30;
   return daily.slice(-n);
 }
+var HARNESS=[{k:'pi',n:'Pi',c:'#a78bfa'},{k:'codex',n:'Codex',c:'#60a5fa'},{k:'claude',n:'Claude',c:'#fb923c'}];
+var __chartSrc='all';
+function setChartSrc(s){
+  __chartSrc=s;
+  document.querySelectorAll('.cs').forEach(function(b){b.classList.toggle('active',b.dataset.s===s)});
+  drawCharts();
+}
 function setChartPeriod(p){
   __chartPeriod=p;__manualAt=Date.now();
   document.querySelectorAll('.cp').forEach(function(b){b.classList.toggle('active',b.dataset.p===p)});
@@ -865,8 +910,9 @@ function fmtCostFull(c){
   return'$'+c.toFixed(2);
 }
 function drawCharts(){
-  __lastDaily=__data?(__data.daily||[]):[];
-  __lastDailyCost=__data?(__data.daily_cost||[]):[];
+  var src=(__data&&__data.daily_src&&__data.daily_src[__chartSrc])||null;
+  __lastDaily=src?src.tokens:(__data?(__data.daily||[]):[]);
+  __lastDailyCost=src?src.cost:(__data?(__data.daily_cost||[]):[]);
   drawChartWith('cv',filterByPeriod(__lastDaily),function(d){return d.tokens},__chartHits,true);
   drawChartWith('cv2',filterByPeriod(__lastDailyCost),function(d){return d.cost},__chartHits2,true);
 }
@@ -878,7 +924,19 @@ function render(d){
   $('v-week').textContent=fmt(d.week_tok);
   $('v-all').textContent=fmt(d.all_tok);
   $('v-cost').textContent=fmtCostFull(d.cost_today);
-  $('sess-line').textContent=(d.src_today?('Pi '+fmt(d.src_today.pi||0)+' \u00b7 Cx '+fmt(d.src_today.codex||0)+' \u00b7 Cc '+fmt(d.src_today.claude||0)+' \u00b7 '):'harness local \u00b7 ')+d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
+  $('sess-line').textContent=d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
+  var hs=d.harness||{},mxh=1;
+  HARNESS.forEach(function(h){var e=hs[h.k];if(e&&e.today>mxh)mxh=e.today;});
+  $('harness-list').innerHTML=HARNESS.map(function(h){
+    var e=hs[h.k]||{today:0,week:0,all:0,cost_today:0,cost_all:0};
+    var pct=Math.max(2,Math.round(e.today/mxh*100));
+    return '<div class="hrow"><div class="hline"><span class="hdot" style="background:'+h.c+'"></span>'
+      +'<span class="hname">'+h.n+'</span>'
+      +'<span class="hvals">'+fmt(e.today)+' \u00b7 '+fmtCostFull(e.cost_today)+'</span></div>'
+      +'<div class="tbar"><div style="width:'+pct+'%;background:'+h.c+'"></div></div>'
+      +'<div class="hsub">7d '+fmt(e.week)+' \u00b7 '+fmt(e.all)+' all \u00b7 '+fmtCostFull(e.cost_all)+'</div></div>';
+  }).join('');
+  document.querySelectorAll('.cs').forEach(function(b){b.classList.toggle('active',b.dataset.s===__chartSrc)});
   var f=d.fetched_at?new Date(d.fetched_at*1000):null;
   $('sync-line').textContent=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
   var mx=Math.max.apply(null,[1].concat((d.top_models||[]).map(function(m){return m.tokens})));
