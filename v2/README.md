@@ -9,12 +9,14 @@ message assistant, coûts estimés).
 ![macOS only](https://img.shields.io/badge/macOS-only-black?logo=apple)
 ![Python 3](https://img.shields.io/badge/Python-3-blue)
 
-## Interface (reconstruite de zéro)
+## Interface
 
-- **Header** `π Pi` + nombre de sessions (total · aujourd'hui), heure de MAJ
-- **Stats** : Today (avec temps écoulé) · 7 days · All time · Cost today (exact)
-- **Graphiques** : tokens 30 j + coûts, périodes 1d/7d/1m/All, styles
-  bars/line/area, tooltips
+- **Header** `π Tokenbar` + sessions (total · aujourd'hui), heure de MAJ
+- **Stats** : Today (avec temps écoulé) · 7 days · All time · Cost today
+- **Par harness** : Pi (violet) · Codex (bleu) · Claude (orange) — today + coût
+  du jour, barre de part relative, sous-ligne 7d / all / coût total
+- **Graphiques** : tokens + coûts, filtre source All/Pi/Codex/Claude, périodes
+  1d/7d/1m/All, styles bars/line/area, tooltips
 - **Top models** : top 8 inline avec barres + fenêtre « All models »
   (1d/7d/1m/all, recherche, coûts exacts)
 - **Quota mensuel** ($, barre de progression), **Flex** (tweet pré-rempli),
