@@ -1,8 +1,10 @@
-# Tokenbar v2 — 100 % Pi (ton harness)
+# Tokenbar v2 — Pi + Codex CLI + Claude Code (sources locales)
 
-Menu bar macOS qui affiche ta consommation pi en direct depuis les sessions
-locales (`~/.pi/agent/sessions/*/*.jsonl`). Aucune estimation : pi calcule
-lui-même le coût exact de chaque message.
+Menu bar macOS qui affiche ta consommation fusionnée en direct depuis les
+sessions locales : Pi (`~/.pi/agent/sessions/*/*.jsonl`, coûts exacts),
+Codex CLI (`~/.codex/sessions/**/*.jsonl`, `token_usage_record` incrémental,
+coûts estimés) et Claude Code (`~/.claude/projects/**/*.jsonl`, usage par
+message assistant, coûts estimés).
 
 ![macOS only](https://img.shields.io/badge/macOS-only-black?logo=apple)
 ![Python 3](https://img.shields.io/badge/Python-3-blue)
@@ -23,9 +25,14 @@ Séries calendaires continues : chaque jour sans activité vaut 0 explicite
 
 ## Données
 
-`_pi_all_messages()` : granularité message (modèle + jour + provider exacts),
-cache incrémental par fichier (mtime+taille, ~167 fichiers). Froid ~0,5 s,
-tiède ~0 s. Fetch en tâche de fond toutes les 15 s, jamais sur le thread UI.
+`_pi_all_messages()` + `_codex_all_messages()` + `_claude_all_messages()` :
+granularité message/jour/modèle, cache incrémental par fichier (mtime+taille).
+Froid ~5 s (3092 fichiers Claude), tiède ~0 s. Fetch en tâche de fond toutes
+les 15 s, jamais sur le thread UI. Tarifs estimés : `CLAUDE_PRICING` +
+`BLENDED_RATES` (cf v1), calibrés sur les coûts exacts Pi
+(`deepseek-v4.1-flash` $0.01/M, `muse-spark` $0.006/M, `stealth/ox-alpha` $0).
+Sous-ligne du header : `Pi X · Cx Y · Cc Z` (today par source). Fenêtre Models :
+badges `Pi` / `Codex` / `Claude`.
 
 ## Lancement
 
