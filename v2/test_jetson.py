@@ -23,9 +23,9 @@ def fake_cost(model, i, o, cw=0, cr=0):
 
 
 def src_line(rid, day="2026-10-04", model="muse-spark",
-             i=1000, o=100, cr=400, r=0, extra=True):
+             i=1000, o=100, cr=400, r=0, extra=True, surface="test"):
     ts = int(datetime.strptime(day, "%Y-%m-%d").timestamp() * 1000)
-    e = {"requestId": rid, "timestamp": ts, "model": model, "surface": "test",
+    e = {"requestId": rid, "timestamp": ts, "model": model, "surface": surface,
          "usage": {"inputTokens": i, "outputTokens": o,
                    "cachedInputTokens": cr, "reasoningOutputTokens": r},
          "totalTokens": i + o}
@@ -133,6 +133,15 @@ check("malforme -> None",
 # raisonnement conserve
 rr = _parse_record(json.loads(src_line("y", r=55)), set(), fake_cost)
 check("reasoning conserve", rr[5] == 55, rr)
+# sous-providers par surface
+rh = _parse_record(json.loads(src_line("h1", surface="hermes")), set(), fake_cost)
+check("surface hermes -> provider jetson-hermes", rh[2] == "jetson-hermes", rh)
+rc = _parse_record(json.loads(src_line("c1", surface="claude")), set(), fake_cost)
+check("surface claude -> provider jetson-claude", rc[2] == "jetson-claude", rc)
+rc2 = _parse_record(json.loads(src_line("c2", surface="  CLAUDE  ")), set(), fake_cost)
+check("surface insensible casse/espaces", rc2[2] == "jetson-claude", rc2)
+rn = _parse_record(json.loads(src_line("n1", surface=None)), set(), fake_cost)
+check("surface absente -> provider jetson", rn[2] == "jetson", rn)
 
 with tempfile.TemporaryDirectory() as t:
     d = Path(t)

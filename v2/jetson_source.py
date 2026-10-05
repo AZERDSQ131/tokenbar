@@ -26,6 +26,10 @@ from pathlib import Path
 JETSON_DIR = Path(__file__).resolve().parent / "jetson_data"
 PROVIDER = "jetson"
 
+# Surfaces Jetson -> sous-providers (barres empilées côté Mac).
+# "hermes" = Hermes Agent sur le Jetson ; "claude" = Claude Code via le proxy.
+SURFACE_PROVIDERS = {"hermes": "jetson-hermes", "claude": "jetson-claude"}
+
 # files: path -> {"sig": (mtime, size), "rows": [...], "ids": [...]}
 _jetson_cache = {"files": {}, "rows": []}
 
@@ -71,8 +75,10 @@ def _parse_record(e, seen, cost_fn):
         return None
     seen.add(rid)
     model = e.get("model") or "jetson"
+    surf = (e.get("surface") or "").strip().lower()
+    prov = SURFACE_PROVIDERS.get(surf, PROVIDER)
     cst = cost_fn(model, i_net, o, 0, cr)
-    return (day, model, PROVIDER, i_net, o, r, cr, 0, cst)
+    return (day, model, prov, i_net, o, r, cr, 0, cst)
 
 
 def jetson_all_messages(data_dir=None, cost_fn=None):

@@ -315,6 +315,7 @@ def _jetson_sync_impl(timeout):
     except Exception:
         pass
     detail = f"+{exported} requêtes" if exported else "à jour"
+    _jetson_sync["last_detail"] = detail
     return {"ok": True, "exported": exported, "detail": detail}
 
 
@@ -609,9 +610,18 @@ def fetch_sync():
     cost_all = cost_today = 0.0
     today_tok = week_tok = all_tok = 0
     bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0}
-    per_day_src = {"pi": {}, "codex": {}, "claude": {}, "jetson": {}}
+    per_day_src = {"pi": {}, "codex": {}, "claude": {}, "jetson": {},
+                   "jetson-claude": {}, "jetson-hermes": {}}
     hstats = {k: {"today": 0, "week": 0, "all": 0, "cost_today": 0.0, "cost_all": 0.0}
-              for k in ("pi", "codex", "claude", "jetson")}
+              for k in ("pi", "codex", "claude", "jetson",
+                        "jetson-claude", "jetson-hermes")}
+
+    # Sous-providers Jetson -> famille parente (barres empilées) + segment.
+    # jetson-claude : Claude Code via le proxy sur le Jetson (surface "claude").
+    # jetson-hermes : Hermes Agent sur le Jetson (surface "hermes").
+    # jetson (autre surface) : reste compté dans le total Jetson uniquement.
+    JETSON_SEG = {"jetson-claude": ("claude", "jetson-claude"),
+                  "jetson-hermes": (None, "jetson-hermes")}
 
     for (day, name, prov, i, o, r, cr, cw, cst) in rows:
         tok = i + o + cr + cw
@@ -619,17 +629,23 @@ def fetch_sync():
             continue
         all_tok += tok
         cost_all += cst
-        skey = ("jetson" if prov == "jetson"
-                else "pi" if prov not in ("codex", "claude-code")
-                else ("codex" if prov == "codex" else "claude"))
-        hs = hstats[skey]
-        hs["all"] += tok; hs["cost_all"] += cst
-        if day == today_str:
-            hs["today"] += tok; hs["cost_today"] += cst
-        if day >= week_cut:
-            hs["week"] += tok
-        se = per_day_src[skey].setdefault(day, [0, 0.0])
-        se[0] += tok; se[1] += cst
+        if prov in JETSON_SEG:
+            parent, seg = JETSON_SEG[prov]
+            keys = ["jetson", seg] + ([parent] if parent else [])
+        else:
+            skey = ("jetson" if prov == "jetson"
+                    else "pi" if prov not in ("codex", "claude-code")
+                    else ("codex" if prov == "codex" else "claude"))
+            keys = [skey]
+        for skey in keys:
+            hs = hstats[skey]
+            hs["all"] += tok; hs["cost_all"] += cst
+            if day == today_str:
+                hs["today"] += tok; hs["cost_today"] += cst
+            if day >= week_cut:
+                hs["week"] += tok
+            se = per_day_src[skey].setdefault(day, [0, 0.0])
+            se[0] += tok; se[1] += cst
         mall[name] = mall.get(name, 0) + tok
         mcost[name] = mcost.get(name, 0.0) + cst
         pe = pall.setdefault(prov, {"tokens": 0, "cost": 0.0, "today": 0, "today_cost": 0.0})
@@ -683,7 +699,8 @@ def fetch_sync():
         if p.endswith("#rows") and any(r[0] == today_str for r in v):
             tfiles += 1
     daily_src = {}
-    for skey in ("pi", "codex", "claude", "jetson"):
+    for skey in ("pi", "codex", "claude", "jetson",
+                 "jetson-claude", "jetson-hermes"):
         sd = per_day_src[skey]
         st, sc = [], []
         for j in range(pad_days + 1):
@@ -717,6 +734,10 @@ def fetch_sync():
         "fetched_at": time.time(),
         "src_today": src_today,
         "src_all": src_all,
+        "jetson_sync": {"running": _jetson_sync["running"],
+                        "last_ok": _jetson_sync["last_ok"],
+                        "last_err": _jetson_sync["last_err"],
+                        "detail": _jetson_sync.get("last_detail")},
     }
 
 
@@ -729,10 +750,15 @@ def fetch_all_models(use_cache=True):
     codex_rows = _codex_all_messages()
     claude_rows = _claude_all_messages()
     jetson_rows = _jetson_all_messages()
+    # Sous-providers Jetson -> badge lisible (le provider brut reste dans
+    # fetch_sync pour les barres empilées).
+    JETSON_SRC = {"jetson-hermes": "Hermes", "jetson-claude": "Jetson",
+                  "jetson": "Jetson"}
     tagged = ([(d, n, p, i, o, r, cr, cw, c, "Pi") for (d, n, p, i, o, r, cr, cw, c) in rows]
               + [(d, n, p, i, o, r, cr, cw, c, "Codex") for (d, n, p, i, o, r, cr, cw, c) in codex_rows]
               + [(d, n, p, i, o, r, cr, cw, c, "Claude") for (d, n, p, i, o, r, cr, cw, c) in claude_rows]
-              + [(d, n, p, i, o, r, cr, cw, c, "Jetson") for (d, n, p, i, o, r, cr, cw, c) in jetson_rows])
+              + [(d, n, p, i, o, r, cr, cw, c, JETSON_SRC.get(p, "Jetson"))
+                 for (d, n, p, i, o, r, cr, cw, c) in jetson_rows])
     now_d = datetime.now().date()
     cuts = {"1d": now_d.isoformat(),
             "7d": (now_d - timedelta(days=6)).isoformat(),
@@ -777,6 +803,8 @@ html::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px
   font-size:17px;cursor:pointer;padding:6px}
 .gear:hover{color:rgba(255,255,255,.7)}
 .sync{padding:0 16px 6px;font-size:9.5px;color:rgba(255,255,255,.28);letter-spacing:.02em}
+.sync .spin{display:inline-block;animation:rot 1s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
 .stats{display:grid;grid-template-columns:1fr 1fr;padding:6px 16px 4px;row-gap:12px}
 .lbl{font-size:11.5px;font-weight:500;color:rgba(255,255,255,.55);margin-bottom:2px}
 .val{font-size:24px;font-weight:700;letter-spacing:-.7px;line-height:1}
@@ -795,7 +823,7 @@ html::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px
 .trow .tname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .trow .tvals{margin-left:auto;color:rgba(255,255,255,.55);white-space:nowrap;font-size:11.5px}
 .tbar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:4px}
-.tbar div{height:100%;border-radius:2px;background:rgba(255,255,255,.55)}
+.tbar div{height:100%;border-radius:2px;background:rgba(255,255,255,.55);position:relative}
 .chart-wrap{padding:2px 16px 0;position:relative}
 canvas{display:block;width:100%}
 .chart-controls{display:flex;align-items:center;padding:2px 16px 2px}
@@ -852,6 +880,7 @@ canvas{display:block;width:100%}
   <button class="cs" data-s="codex" onclick="setChartSrc('codex')">Codex</button>
   <button class="cs" data-s="claude" onclick="setChartSrc('claude')">Claude</button>
   <button class="cs" data-s="jetson" onclick="setChartSrc('jetson')">Jetson</button>
+  <button class="cs" data-s="jetson-hermes" onclick="setChartSrc('jetson-hermes')">Hermes</button>
 </div>
 <div class="chart-wrap"><canvas id="cv"></canvas></div>
 <div class="chart-controls"><div class="chart-periods">
@@ -1012,6 +1041,9 @@ function filterByPeriod(daily){
   return daily.slice(-n);
 }
 var HARNESS=[{k:'pi',n:'Pi',c:'#a78bfa'},{k:'codex',n:'Codex',c:'#60a5fa'},{k:'claude',n:'Claude',c:'#fb923c'},{k:'jetson',n:'Jetson',c:'#4ade80'}];
+// Segments empilés : part Jetson à l'intérieur d'une barre parente,
+// + barre Hermes (100 % Jetson).
+var HSEG={claude:{k:'jetson-claude',c:'#f472b6',lbl:'Jetson'},hermes:{k:'jetson-hermes',c:'#facc15',lbl:'Hermes'}};
 var __chartSrc='all';
 function setChartSrc(s){
   __chartSrc=s;
@@ -1052,18 +1084,48 @@ function render(d){
   $('sess-line').textContent=d.sessions_all+' sessions'+(d.sessions_today?' \u00b7 '+d.sessions_today+' today':'');
   var hs=d.harness||{},mxh=1;
   HARNESS.forEach(function(h){var e=hs[h.k];if(e&&e.today>mxh)mxh=e.today;});
+  var _he=(mxh>0);
   $('harness-list').innerHTML=HARNESS.map(function(h){
     var e=hs[h.k]||{today:0,week:0,all:0,cost_today:0,cost_all:0};
     var pct=Math.max(2,Math.round(e.today/mxh*100));
+    var bar='<div class="tbar"><div style="width:'+pct+'%;background:'+h.c+'">';
+    // Segment Jetson empil\u00e9 en fin de barre (Codex, Claude).
+    var seg=HSEG[h.k];
+    if(seg&&_he){
+      var se=hs[seg.k]||{today:0};
+      var spct=Math.round(se.today/mxh*100);
+      if(spct>0)bar+='<div style="position:absolute;right:0;top:0;bottom:0;width:'+spct+'%;background:'+seg.c+';border-radius:2px" title="'+seg.lbl+' (Jetson)"></div>';
+    }
+    bar+='</div></div>';
     return '<div class="hrow"><div class="hline"><span class="hdot" style="background:'+h.c+'"></span>'
       +'<span class="hname">'+h.n+'</span>'
       +'<span class="hvals">'+fmt(e.today)+' \u00b7 '+fmtCostFull(e.cost_today)+'</span></div>'
-      +'<div class="tbar"><div style="width:'+pct+'%;background:'+h.c+'"></div></div>'
+      +bar
       +'<div class="hsub">7d '+fmt(e.week)+' \u00b7 '+fmt(e.all)+' all \u00b7 '+fmtCostFull(e.cost_all)+'</div></div>';
-  }).join('');
+  }).join('')
+  // Barre Hermes jaune (100 % Jetson) sous les 4 harnesses.
+  + (function(){
+    var e=hs['jetson-hermes']||{today:0,week:0,all:0,cost_today:0,cost_all:0};
+    var pct=Math.max(2,Math.round(e.today/mxh*100));
+    return '<div class="hrow"><div class="hline"><span class="hdot" style="background:#facc15"></span>'
+      +'<span class="hname">Hermes</span>'
+      +'<span class="hvals">'+fmt(e.today)+' \u00b7 '+fmtCostFull(e.cost_today)+'</span></div>'
+      +'<div class="tbar"><div style="width:'+pct+'%;background:#facc15"></div></div>'
+      +'<div class="hsub">7d '+fmt(e.week)+' \u00b7 '+fmt(e.all)+' all \u00b7 '+fmtCostFull(e.cost_all)+'</div></div>';
+  })();
   document.querySelectorAll('.cs').forEach(function(b){b.classList.toggle('active',b.dataset.s===__chartSrc)});
   var f=d.fetched_at?new Date(d.fetched_at*1000):null;
-  $('sync-line').textContent=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
+  var jl=d.jetson_sync||null;
+  if(jl&&jl.running){
+    $('sync-line').innerHTML='<span class="spin">⟳</span> Sync Jetson…';
+  }else if(jl&&jl.last_err){
+    $('sync-line').textContent=(f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')+' · '):'')+'Jetson: '+jl.last_err;
+  }else if(jl&&jl.last_ok){
+    var jf=new Date(jl.last_ok*1000);
+    $('sync-line').textContent=(f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')+' · '):'')+'Jetson ✓ '+String(jf.getHours()).padStart(2,'0')+':'+String(jf.getMinutes()).padStart(2,'0')+(jl.detail?' ('+jl.detail+')':'');
+  }else{
+    $('sync-line').textContent=f?('MAJ '+String(f.getHours()).padStart(2,'0')+':'+String(f.getMinutes()).padStart(2,'0')):'';
+  }
   var mx=Math.max.apply(null,[1].concat((d.top_models||[]).map(function(m){return m.tokens})));
   $('top-list').innerHTML=(d.top_models||[]).map(function(m,i){
     var pct=Math.max(2,Math.round(m.tokens/mx*100));
@@ -1170,6 +1232,8 @@ input:focus{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.25)}
 .badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;
   border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.42);
   margin-left:5px;vertical-align:middle}
+.badge.jetson{background:rgba(74,222,128,.15);border-color:rgba(74,222,128,.4);color:#4ade80}
+.badge.hermes{background:rgba(250,204,21,.15);border-color:rgba(250,204,21,.4);color:#facc15}
 .empty{padding:24px 16px;color:rgba(255,255,255,.3);font-size:13px;text-align:center}
 </style></head><body>
 <div class="search">
@@ -1225,10 +1289,11 @@ function render(items){
   el.innerHTML=items.map((m,i)=>{
     const pct=Math.max(2,Math.round(m.tokens/max*100));
     const cs=fmtCost(m.cost);
+    const bc=m.source==='Hermes'?'hermes':(m.source==='Jetson'?'jetson':'');
     return'<div class="row">'+
       '<div class="rank">'+(i+1)+'</div>'+
       '<div class="info">'+
-        '<div class="name">'+m.name+'<span class="badge">'+m.source+'</span></div>'+
+        '<div class="name">'+m.name+'<span class="badge '+bc+'">'+m.source+'</span></div>'+
         '<div class="bar-wrap"><div class="bar-fill" style="width:'+pct+'%"></div></div>'+
       '</div>'+
       '<div class="right"><div class="tok">'+fmt(m.tokens)+'</div>'+(cs?'<div class="cost">'+cs+'</div>':'')+
@@ -1765,14 +1830,19 @@ class AppDelegate(NSObject):
     def refresh_with_jetson(self):
         """Bouton Refresh : sync Jetson (SSH+rsync) puis refresh normal.
 
-        La sync tourne en tâche de fond (peut prendre ~10-30 s) ; le refresh
-        local est immédiat, puis un 2e refresh suit la sync si elle réussit.
+        Progression visible dans la sync-line du popover : spinner pendant
+        la sync, puis "Jetson ✓ HH:MM (+N)" ou l'erreur. La sync tourne en
+        tâche de fond ; le refresh local est immédiat, puis un 2e refresh
+        suit la sync (succès ou échec, pour afficher le statut).
         """
         self.inject_data()
         if _jetson_sync["running"]:
             return
         app_ref = self
         def work():
+            _jetson_sync["running"] = True
+            app_ref.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_push_jetson_status", True, False)
             try:
                 res = jetson_sync_now()
                 print(f"[tokenbar-v2] jetson sync: {res}", flush=True)
@@ -1780,6 +1850,7 @@ class AppDelegate(NSObject):
                 import traceback
                 traceback.print_exc()
                 res = {"ok": False}
+            _jetson_sync["running"] = False
             if res.get("ok"):
                 # Invalide le cache fetch pour forcer la relecture.
                 _pi_fetch["ts"] = 0.0
@@ -1788,8 +1859,23 @@ class AppDelegate(NSObject):
                     reset_cache()
                 except Exception:
                     pass
-                app_ref.refresh_in_background()
+            app_ref.refresh_in_background()
         threading.Thread(target=work, daemon=True).start()
+
+    @objc.python_method
+    def _push_jetson_status(self):
+        """Pousse l'état de sync Jetson dans le popover sans refetch."""
+        if self._last_data is None or not self._pop.isShown():
+            return
+        try:
+            data = dict(self._last_data,
+                        jetson_sync={"running": _jetson_sync["running"],
+                                     "last_ok": _jetson_sync["last_ok"],
+                                     "last_err": _jetson_sync["last_err"],
+                                     "detail": _jetson_sync.get("last_detail")})
+            self._inject_js(data)
+        except Exception:
+            pass
 
     @objc.python_method
     def _inject_js(self, data):
@@ -1825,6 +1911,7 @@ class AppDelegate(NSObject):
         if st.get("codex"): sources.append("Codex")
         if st.get("claude"): sources.append("Claude")
         if st.get("jetson"): sources.append("Jetson")
+        if st.get("jetson-hermes"): sources.append("Hermes")
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
