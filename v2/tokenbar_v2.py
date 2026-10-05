@@ -213,6 +213,20 @@ def claude_cost(model: str, inp: int, out: int,
 _pi_cache = {"files": {}, "rows": []}
 _codex_cache = {"files": {}, "rows": []}
 _claude_cache = {"files": {}, "rows": []}
+
+
+def _jetson_all_messages():
+    """Rows Jetson (provider "jetson") — ADDITIF, jamais de remplacement.
+
+    Import paresseux : si v2/jetson_source.py ou v2/jetson_data/ est absent
+    (Mac sans sync), retourne [] et le reste est inchange.
+    """
+    try:
+        from jetson_source import jetson_all_messages
+        return jetson_all_messages()
+    except Exception as e:
+        print(f"[tokenbar-v2] jetson: {e}", flush=True)
+        return []
 _pi_fetch = {"ts": 0.0, "data": None}
 PI_TTL = 10.0
 _models_cache = {"ts": 0.0, "data": None}
@@ -477,7 +491,10 @@ def fetch(use_cache=True):
 
 
 def fetch_sync():
-    rows = _pi_all_messages() + _codex_all_messages() + _claude_all_messages()
+    # Jetson s'AJOUTE aux 3 sources locales (additif, dedupe par requestId
+    # dans jetson_source — jamais de remplacement ni de refiltrage).
+    rows = (_pi_all_messages() + _codex_all_messages()
+            + _claude_all_messages() + _jetson_all_messages())
     now_dt = datetime.now()
     today_str = now_dt.date().isoformat()
     week_cut = (now_dt.date() - timedelta(days=6)).isoformat()
@@ -489,9 +506,9 @@ def fetch_sync():
     cost_all = cost_today = 0.0
     today_tok = week_tok = all_tok = 0
     bd_today = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0}
-    per_day_src = {"pi": {}, "codex": {}, "claude": {}}
+    per_day_src = {"pi": {}, "codex": {}, "claude": {}, "jetson": {}}
     hstats = {k: {"today": 0, "week": 0, "all": 0, "cost_today": 0.0, "cost_all": 0.0}
-              for k in ("pi", "codex", "claude")}
+              for k in ("pi", "codex", "claude", "jetson")}
 
     for (day, name, prov, i, o, r, cr, cw, cst) in rows:
         tok = i + o + cr + cw
@@ -499,7 +516,9 @@ def fetch_sync():
             continue
         all_tok += tok
         cost_all += cst
-        skey = "pi" if prov not in ("codex", "claude-code") else ("codex" if prov == "codex" else "claude")
+        skey = ("jetson" if prov == "jetson"
+                else "pi" if prov not in ("codex", "claude-code")
+                else ("codex" if prov == "codex" else "claude"))
         hs = hstats[skey]
         hs["all"] += tok; hs["cost_all"] += cst
         if day == today_str:
@@ -561,7 +580,7 @@ def fetch_sync():
         if p.endswith("#rows") and any(r[0] == today_str for r in v):
             tfiles += 1
     daily_src = {}
-    for skey in ("pi", "codex", "claude"):
+    for skey in ("pi", "codex", "claude", "jetson"):
         sd = per_day_src[skey]
         st, sc = [], []
         for j in range(pad_days + 1):
@@ -606,9 +625,11 @@ def fetch_all_models(use_cache=True):
     rows = _pi_all_messages()
     codex_rows = _codex_all_messages()
     claude_rows = _claude_all_messages()
+    jetson_rows = _jetson_all_messages()
     tagged = ([(d, n, p, i, o, r, cr, cw, c, "Pi") for (d, n, p, i, o, r, cr, cw, c) in rows]
               + [(d, n, p, i, o, r, cr, cw, c, "Codex") for (d, n, p, i, o, r, cr, cw, c) in codex_rows]
-              + [(d, n, p, i, o, r, cr, cw, c, "Claude") for (d, n, p, i, o, r, cr, cw, c) in claude_rows])
+              + [(d, n, p, i, o, r, cr, cw, c, "Claude") for (d, n, p, i, o, r, cr, cw, c) in claude_rows]
+              + [(d, n, p, i, o, r, cr, cw, c, "Jetson") for (d, n, p, i, o, r, cr, cw, c) in jetson_rows])
     now_d = datetime.now().date()
     cuts = {"1d": now_d.isoformat(),
             "7d": (now_d - timedelta(days=6)).isoformat(),
@@ -727,6 +748,7 @@ canvas{display:block;width:100%}
   <button class="cs" data-s="pi" onclick="setChartSrc('pi')">Pi</button>
   <button class="cs" data-s="codex" onclick="setChartSrc('codex')">Codex</button>
   <button class="cs" data-s="claude" onclick="setChartSrc('claude')">Claude</button>
+  <button class="cs" data-s="jetson" onclick="setChartSrc('jetson')">Jetson</button>
 </div>
 <div class="chart-wrap"><canvas id="cv"></canvas></div>
 <div class="chart-controls"><div class="chart-periods">
@@ -886,7 +908,7 @@ function filterByPeriod(daily){
   var n=__chartPeriod==='1d'?1:__chartPeriod==='7d'?7:30;
   return daily.slice(-n);
 }
-var HARNESS=[{k:'pi',n:'Pi',c:'#a78bfa'},{k:'codex',n:'Codex',c:'#60a5fa'},{k:'claude',n:'Claude',c:'#fb923c'}];
+var HARNESS=[{k:'pi',n:'Pi',c:'#a78bfa'},{k:'codex',n:'Codex',c:'#60a5fa'},{k:'claude',n:'Claude',c:'#fb923c'},{k:'jetson',n:'Jetson',c:'#4ade80'}];
 var __chartSrc='all';
 function setChartSrc(s){
   __chartSrc=s;
@@ -1669,6 +1691,7 @@ class AppDelegate(NSObject):
         if st.get("pi"): sources.append("Pi")
         if st.get("codex"): sources.append("Codex")
         if st.get("claude"): sources.append("Claude")
+        if st.get("jetson"): sources.append("Jetson")
         def fmt(n):
             if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
             if n >= 1_000:    return f"{n/1_000:.1f}k"
