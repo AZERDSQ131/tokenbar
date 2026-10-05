@@ -214,6 +214,109 @@ _pi_cache = {"files": {}, "rows": []}
 _codex_cache = {"files": {}, "rows": []}
 _claude_cache = {"files": {}, "rows": []}
 
+JETSON_HOST = "jetson"
+JETSON_EXPORT_SRC = "~/.opencodex/usage.jsonl"
+JETSON_EXPORT_DST = "~/tokenbar-jetson/"
+JETSON_DATA_DIR = Path(__file__).resolve().parent / "jetson_data"
+_jetson_sync = {"running": False, "last_ok": None, "last_err": None}
+
+
+def jetson_sync_now(timeout=60):
+    """Sync Jetson : export distant + rsync vers v2/jetson_data/. Idempotent.
+
+    1. SSH : lance jetson_export.py sur le Jetson (uploadé si absent).
+    2. rsync : rapatrie ~/tokenbar-jetson/ -> v2/jetson_data/.
+    Retourne {"ok": bool, "exported": int, "detail": str}.
+    Ne lève jamais : toute erreur est retournée dans le dict.
+    """
+    import subprocess
+    if _jetson_sync["running"]:
+        return {"ok": False, "exported": 0, "detail": "sync déjà en cours"}
+    _jetson_sync["running"] = True
+    try:
+        return _jetson_sync_impl(timeout)
+    finally:
+        _jetson_sync["running"] = False
+
+
+def _jetson_sync_impl(timeout):
+    import subprocess
+    local_export = str(Path(__file__).resolve().parent / "jetson_export.py")
+
+    def ssh(*args):
+        return subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+             JETSON_HOST, *args],
+            capture_output=True, text=True, timeout=timeout)
+
+    def ensure_remote():
+        # 1. Crée le dossier + uploade le script si absent ou différent
+        # (comparaison par taille, simple et robuste).
+        try:
+            local_size = Path(local_export).stat().st_size
+        except Exception:
+            return False, "jetson_export.py local introuvable"
+        r = ssh("mkdir -p ~/tokenbar-jetson ~/tokenbar-jetson/data "
+                "~/.local/share/tokenbar-jetson; "
+                "stat -c %s ~/tokenbar-jetson/jetson_export.py 2>/dev/null || echo MISSING")
+        remote_size = r.stdout.strip().split("\n")[-1] if r.returncode == 0 else "MISSING"
+        if remote_size != str(local_size):
+            cp = subprocess.run(
+                ["scp", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+                 local_export, f"{JETSON_HOST}:~/tokenbar-jetson/jetson_export.py"],
+                capture_output=True, text=True, timeout=timeout)
+            if cp.returncode != 0:
+                return False, f"scp script: {cp.stderr.strip()[-300:]}"
+        return True, ""
+
+    ok, detail = ensure_remote()
+    if not ok:
+        _jetson_sync["last_err"] = detail
+        return {"ok": False, "exported": 0, "detail": detail}
+
+    # 2. Export distant.
+    r = ssh(f"python3 ~/tokenbar-jetson/jetson_export.py "
+            f"--out ~/tokenbar-jetson/data --cursor ~/.local/share/tokenbar-jetson/cursor.json")
+    out = (r.stdout.strip() + " " + r.stderr.strip()).strip()
+    if r.returncode != 0:
+        detail = f"export distant: {out[-300:] or r.returncode}"
+        _jetson_sync["last_err"] = detail
+        return {"ok": False, "exported": 0, "detail": detail}
+    exported = 0
+    try:
+        # Parse "+N" dans "[jetson-export] +N dupes=...".
+        import re
+        m = re.search(r"\+(\d+)", out)
+        if m:
+            exported = int(m.group(1))
+    except Exception:
+        pass
+
+    # 3. Rapatrie via rsync.
+    JETSON_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    rs = subprocess.run(
+        ["rsync", "-az", "--timeout=20",
+         "-e", "ssh -o ConnectTimeout=10 -o BatchMode=yes",
+         f"{JETSON_HOST}:~/tokenbar-jetson/data/",
+         str(JETSON_DATA_DIR) + "/"],
+        capture_output=True, text=True, timeout=timeout)
+    if rs.returncode != 0:
+        detail = f"rsync: {rs.stderr.strip()[-300:]}"
+        _jetson_sync["last_err"] = detail
+        return {"ok": False, "exported": exported, "detail": detail}
+
+    import time as _t
+    _jetson_sync["last_ok"] = _t.time()
+    _jetson_sync["last_err"] = None
+    # Invalide le cache jetson pour forcer la relecture des nouveaux fichiers.
+    try:
+        from jetson_source import reset_cache
+        reset_cache()
+    except Exception:
+        pass
+    detail = f"+{exported} requêtes" if exported else "à jour"
+    return {"ok": True, "exported": exported, "detail": detail}
+
 
 def _jetson_all_messages():
     """Rows Jetson (provider "jetson") — ADDITIF, jamais de remplacement.
@@ -1364,7 +1467,7 @@ class MsgHandler(NSObject):
         n = msg.name()
         print(f"[tokenbar-v2] message reçu: {n}", flush=True)
         try:
-            if   n == "refresh" and self._app: self._app.inject_data()
+            if   n == "refresh" and self._app: self._app.refresh_with_jetson()
             elif n == "quit":
                 NSApp.terminate_(None)
             elif n == "resize"  and self._app: self._app.resize_popover(int(msg.body()))
@@ -1657,6 +1760,36 @@ class AppDelegate(NSObject):
         if self._last_data is not None:
             self._inject_js(self._last_data)
         self.refresh_in_background()
+
+    @objc.python_method
+    def refresh_with_jetson(self):
+        """Bouton Refresh : sync Jetson (SSH+rsync) puis refresh normal.
+
+        La sync tourne en tâche de fond (peut prendre ~10-30 s) ; le refresh
+        local est immédiat, puis un 2e refresh suit la sync si elle réussit.
+        """
+        self.inject_data()
+        if _jetson_sync["running"]:
+            return
+        app_ref = self
+        def work():
+            try:
+                res = jetson_sync_now()
+                print(f"[tokenbar-v2] jetson sync: {res}", flush=True)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                res = {"ok": False}
+            if res.get("ok"):
+                # Invalide le cache fetch pour forcer la relecture.
+                _pi_fetch["ts"] = 0.0
+                try:
+                    from jetson_source import reset_cache
+                    reset_cache()
+                except Exception:
+                    pass
+                app_ref.refresh_in_background()
+        threading.Thread(target=work, daemon=True).start()
 
     @objc.python_method
     def _inject_js(self, data):
